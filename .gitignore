@@ -8,7 +8,7 @@ bin/
 MEMORY_BANK.md
 # Test binary, built with `go test -c`
 *.test
-
+.github\copilot-instructions.md
 # Output of the go coverage tool
 *.out
 coverage.html
