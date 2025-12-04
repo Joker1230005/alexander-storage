@@ -171,8 +171,8 @@ func main() {
 	// Initialize services
 	iamService := service.NewIAMService(repos.AccessKey, repos.User, encryptor, log.Logger)
 	bucketService := service.NewBucketService(repos.Bucket, log.Logger)
-	objectService := service.NewObjectService(repos.Object, repos.Blob, repos.Bucket, storageBackend, log.Logger)
-	multipartService := service.NewMultipartService(repos.Multipart, repos.Object, repos.Blob, repos.Bucket, storageBackend, log.Logger)
+	objectService := service.NewObjectService(repos.Object, repos.Blob, repos.Bucket, storageBackend, locker, log.Logger)
+	multipartService := service.NewMultipartService(repos.Multipart, repos.Object, repos.Blob, repos.Bucket, storageBackend, locker, log.Logger)
 
 	// Initialize metrics
 	var m *metrics.Metrics
@@ -187,6 +187,7 @@ func main() {
 		gc = service.NewGarbageCollector(
 			repos.Blob,
 			storageBackend,
+			locker,
 			m,
 			log.Logger,
 			service.GCConfig{
