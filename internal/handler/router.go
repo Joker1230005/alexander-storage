@@ -8,15 +8,22 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/prn-tf/alexander-storage/internal/auth"
+	"github.com/prn-tf/alexander-storage/internal/metrics"
+	"github.com/prn-tf/alexander-storage/internal/middleware"
 )
 
 // Router handles HTTP routing for the S3-compatible API.
 type Router struct {
-	bucketHandler    *BucketHandler
-	objectHandler    *ObjectHandler
-	multipartHandler *MultipartHandler
-	authMiddleware   func(http.Handler) http.Handler
-	logger           zerolog.Logger
+	bucketHandler     *BucketHandler
+	objectHandler     *ObjectHandler
+	multipartHandler  *MultipartHandler
+	healthChecker     *HealthChecker
+	authMiddleware    func(http.Handler) http.Handler
+	rateLimiter       *middleware.RateLimiter
+	tracing           *middleware.Tracing
+	metricsMiddleware *middleware.MetricsMiddleware
+	metrics           *metrics.Metrics
+	logger            zerolog.Logger
 }
 
 // RouterConfig contains configuration for the router.
@@ -24,18 +31,32 @@ type RouterConfig struct {
 	BucketHandler    *BucketHandler
 	ObjectHandler    *ObjectHandler
 	MultipartHandler *MultipartHandler
+	HealthChecker    *HealthChecker
 	AuthMiddleware   func(http.Handler) http.Handler
+	RateLimiter      *middleware.RateLimiter
+	Tracing          *middleware.Tracing
+	Metrics          *metrics.Metrics
 	Logger           zerolog.Logger
 }
 
 // NewRouter creates a new Router.
 func NewRouter(config RouterConfig) *Router {
+	var metricsMiddleware *middleware.MetricsMiddleware
+	if config.Metrics != nil {
+		metricsMiddleware = middleware.NewMetricsMiddleware(config.Metrics)
+	}
+
 	return &Router{
-		bucketHandler:    config.BucketHandler,
-		objectHandler:    config.ObjectHandler,
-		multipartHandler: config.MultipartHandler,
-		authMiddleware:   config.AuthMiddleware,
-		logger:           config.Logger.With().Str("component", "router").Logger(),
+		bucketHandler:     config.BucketHandler,
+		objectHandler:     config.ObjectHandler,
+		multipartHandler:  config.MultipartHandler,
+		healthChecker:     config.HealthChecker,
+		authMiddleware:    config.AuthMiddleware,
+		rateLimiter:       config.RateLimiter,
+		tracing:           config.Tracing,
+		metricsMiddleware: metricsMiddleware,
+		metrics:           config.Metrics,
+		logger:            config.Logger.With().Str("component", "router").Logger(),
 	}
 }
 
@@ -43,14 +64,40 @@ func NewRouter(config RouterConfig) *Router {
 func (rt *Router) Handler() http.Handler {
 	mux := http.NewServeMux()
 
-	// Health check (no auth)
-	mux.HandleFunc("/health", rt.handleHealth)
+	// Health check endpoints (no auth, no rate limiting)
+	if rt.healthChecker != nil {
+		mux.HandleFunc("/health", rt.healthChecker.HandleHealth)
+		mux.HandleFunc("/healthz", rt.healthChecker.HandleLiveness)
+		mux.HandleFunc("/readyz", rt.healthChecker.HandleReadiness)
+	} else {
+		mux.HandleFunc("/health", rt.handleHealth)
+	}
 
 	// Main S3 API handler
 	mux.HandleFunc("/", rt.handleS3Request)
 
-	// Wrap with auth middleware
-	return rt.authMiddleware(mux)
+	// Build middleware chain (innermost to outermost)
+	var handler http.Handler = mux
+
+	// Auth middleware (innermost - after tracing, before rate limiting)
+	handler = rt.authMiddleware(handler)
+
+	// Rate limiting middleware
+	if rt.rateLimiter != nil {
+		handler = rt.rateLimiter.Middleware(handler)
+	}
+
+	// Metrics middleware (track in-flight requests)
+	if rt.metricsMiddleware != nil {
+		handler = rt.metricsMiddleware.Middleware(handler)
+	}
+
+	// Tracing middleware (outermost - first to execute)
+	if rt.tracing != nil {
+		handler = rt.tracing.Middleware(handler)
+	}
+
+	return handler
 }
 
 // handleHealth handles health check requests.

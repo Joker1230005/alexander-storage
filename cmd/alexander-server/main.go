@@ -17,6 +17,8 @@ import (
 	"github.com/prn-tf/alexander-storage/internal/auth"
 	"github.com/prn-tf/alexander-storage/internal/config"
 	"github.com/prn-tf/alexander-storage/internal/handler"
+	"github.com/prn-tf/alexander-storage/internal/metrics"
+	"github.com/prn-tf/alexander-storage/internal/middleware"
 	"github.com/prn-tf/alexander-storage/internal/pkg/crypto"
 	"github.com/prn-tf/alexander-storage/internal/repository/postgres"
 	"github.com/prn-tf/alexander-storage/internal/service"
@@ -95,13 +97,67 @@ func main() {
 	objectService := service.NewObjectService(objectRepo, blobRepo, bucketRepo, storageBackend, log.Logger)
 	multipartService := service.NewMultipartService(multipartRepo, objectRepo, blobRepo, bucketRepo, storageBackend, log.Logger)
 
+	// Initialize metrics
+	var m *metrics.Metrics
+	if cfg.Metrics.Enabled {
+		m = metrics.New()
+		log.Info().Int("port", cfg.Metrics.Port).Msg("Prometheus metrics enabled")
+	}
+
+	// Initialize garbage collector
+	var gc *service.GarbageCollector
+	if cfg.GC.Enabled {
+		gc = service.NewGarbageCollector(
+			blobRepo,
+			storageBackend,
+			m,
+			log.Logger,
+			service.GCConfig{
+				Enabled:     cfg.GC.Enabled,
+				Interval:    cfg.GC.Interval,
+				GracePeriod: cfg.GC.GracePeriod,
+				BatchSize:   cfg.GC.BatchSize,
+				DryRun:      cfg.GC.DryRun,
+			},
+		)
+		gc.Start()
+		defer gc.Stop()
+		log.Info().
+			Dur("interval", cfg.GC.Interval).
+			Dur("grace_period", cfg.GC.GracePeriod).
+			Msg("Garbage collector started")
+	}
+
+	// Initialize rate limiter
+	var rateLimiter *middleware.RateLimiter
+	if cfg.RateLimit.Enabled {
+		rateLimiter = middleware.NewRateLimiter(
+			middleware.RateLimiterConfig{
+				RequestsPerSecond: cfg.RateLimit.RequestsPerSecond,
+				BurstSize:         cfg.RateLimit.BurstSize,
+				Enabled:           cfg.RateLimit.Enabled,
+				CleanupInterval:   5 * time.Minute,
+			},
+			m,
+			log.Logger,
+		)
+		defer rateLimiter.Stop()
+		log.Info().
+			Float64("requests_per_second", cfg.RateLimit.RequestsPerSecond).
+			Int("burst_size", cfg.RateLimit.BurstSize).
+			Msg("Rate limiting enabled")
+	}
+
+	// Initialize tracing middleware
+	tracing := middleware.NewTracing(m, log.Logger)
+
 	// Initialize auth middleware
 	accessKeyStore := service.NewAccessKeyStoreAdapter(iamService)
 	authConfig := auth.Config{
 		Region:         cfg.Auth.Region,
 		Service:        cfg.Auth.Service,
 		AllowAnonymous: false,
-		SkipPaths:      []string{"/health"},
+		SkipPaths:      []string{"/health", "/healthz", "/readyz"},
 	}
 	authMiddleware := handler.CreateAuthMiddleware(accessKeyStore, authConfig)
 
@@ -110,12 +166,24 @@ func main() {
 	objectHandler := handler.NewObjectHandler(objectService, log.Logger)
 	multipartHandler := handler.NewMultipartHandler(multipartService, log.Logger)
 
+	// Initialize health checker
+	healthChecker := handler.NewHealthChecker(handler.HealthCheckerConfig{
+		DatabaseChecker: db,
+		StorageBackend:  storageBackend,
+		Logger:          log.Logger,
+		CacheTTL:        5 * time.Second,
+	})
+
 	// Initialize router
 	router := handler.NewRouter(handler.RouterConfig{
 		BucketHandler:    bucketHandler,
 		ObjectHandler:    objectHandler,
 		MultipartHandler: multipartHandler,
+		HealthChecker:    healthChecker,
 		AuthMiddleware:   authMiddleware,
+		RateLimiter:      rateLimiter,
+		Tracing:          tracing,
+		Metrics:          m,
 		Logger:           log.Logger,
 	})
 
@@ -126,6 +194,26 @@ func main() {
 		ReadTimeout:  cfg.Server.ReadTimeout,
 		WriteTimeout: cfg.Server.WriteTimeout,
 		IdleTimeout:  cfg.Server.IdleTimeout,
+	}
+
+	// Start metrics server if enabled
+	var metricsServer *http.Server
+	if cfg.Metrics.Enabled {
+		metricsMux := http.NewServeMux()
+		metricsMux.Handle(cfg.Metrics.Path, metrics.Handler())
+		metricsServer = &http.Server{
+			Addr:    fmt.Sprintf(":%d", cfg.Metrics.Port),
+			Handler: metricsMux,
+		}
+		go func() {
+			log.Info().
+				Int("port", cfg.Metrics.Port).
+				Str("path", cfg.Metrics.Path).
+				Msg("Metrics server listening")
+			if err := metricsServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Error().Err(err).Msg("Metrics server failed")
+			}
+		}()
 	}
 
 	// Start server in goroutine
@@ -150,6 +238,13 @@ func main() {
 	// Graceful shutdown with timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Shutdown metrics server first
+	if metricsServer != nil {
+		if err := metricsServer.Shutdown(shutdownCtx); err != nil {
+			log.Error().Err(err).Msg("Metrics server shutdown error")
+		}
+	}
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("Server shutdown error")

@@ -80,6 +80,15 @@ type Backend interface {
 	// Returns:
 	//   - string: Full path to the content in storage
 	GetPath(contentHash string) string
+
+	// HealthCheck verifies the storage backend is accessible and functioning.
+	//
+	// Parameters:
+	//   - ctx: Context for cancellation and timeouts
+	//
+	// Returns:
+	//   - err: Error if the health check fails
+	HealthCheck(ctx context.Context) error
 }
 
 // ContentAddressableStorage extends Backend with reference counting support.

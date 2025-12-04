@@ -320,5 +320,32 @@ func (l *limitedReadCloser) Close() error {
 	return l.closer.Close()
 }
 
+// HealthCheck verifies the storage backend is accessible.
+func (s *Storage) HealthCheck(ctx context.Context) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Check data directory is accessible
+	if _, err := os.Stat(s.dataDir); err != nil {
+		return fmt.Errorf("data directory not accessible: %w", err)
+	}
+
+	// Check temp directory is accessible
+	if _, err := os.Stat(s.tempDir); err != nil {
+		return fmt.Errorf("temp directory not accessible: %w", err)
+	}
+
+	// Try to create and remove a test file
+	testPath := filepath.Join(s.tempDir, ".health-check")
+	if err := os.WriteFile(testPath, []byte("ok"), 0644); err != nil {
+		return fmt.Errorf("failed to write test file: %w", err)
+	}
+	if err := os.Remove(testPath); err != nil {
+		return fmt.Errorf("failed to remove test file: %w", err)
+	}
+
+	return nil
+}
+
 // Ensure Storage implements storage.Backend
 var _ storage.Backend = (*Storage)(nil)

@@ -12,12 +12,15 @@ import (
 
 // Config represents the complete application configuration.
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Redis    RedisConfig    `mapstructure:"redis"`
-	Storage  StorageConfig  `mapstructure:"storage"`
-	Auth     AuthConfig     `mapstructure:"auth"`
-	Logging  LoggingConfig  `mapstructure:"logging"`
+	Server    ServerConfig    `mapstructure:"server"`
+	Database  DatabaseConfig  `mapstructure:"database"`
+	Redis     RedisConfig     `mapstructure:"redis"`
+	Storage   StorageConfig   `mapstructure:"storage"`
+	Auth      AuthConfig      `mapstructure:"auth"`
+	Logging   LoggingConfig   `mapstructure:"logging"`
+	Metrics   MetricsConfig   `mapstructure:"metrics"`
+	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
+	GC        GCConfig        `mapstructure:"gc"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -133,6 +136,54 @@ type LoggingConfig struct {
 	TimeFormat string `mapstructure:"time_format"`
 }
 
+// MetricsConfig holds Prometheus metrics settings.
+type MetricsConfig struct {
+	// Enabled determines if metrics collection is active.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Port is the port for the metrics HTTP server.
+	Port int `mapstructure:"port"`
+
+	// Path is the URL path for the metrics endpoint.
+	Path string `mapstructure:"path"`
+}
+
+// RateLimitConfig holds rate limiting settings.
+type RateLimitConfig struct {
+	// Enabled determines if rate limiting is active.
+	Enabled bool `mapstructure:"enabled"`
+
+	// RequestsPerSecond is the rate of token refill per client.
+	RequestsPerSecond float64 `mapstructure:"requests_per_second"`
+
+	// BurstSize is the maximum number of tokens (burst capacity).
+	BurstSize int `mapstructure:"burst_size"`
+
+	// BandwidthEnabled enables bandwidth limiting.
+	BandwidthEnabled bool `mapstructure:"bandwidth_enabled"`
+
+	// BytesPerSecond is the bandwidth limit per client (in bytes).
+	BytesPerSecond int64 `mapstructure:"bytes_per_second"`
+}
+
+// GCConfig holds garbage collection settings.
+type GCConfig struct {
+	// Enabled determines if automatic garbage collection runs.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Interval is how often to run garbage collection.
+	Interval time.Duration `mapstructure:"interval"`
+
+	// GracePeriod is how long to wait before deleting orphan blobs.
+	GracePeriod time.Duration `mapstructure:"grace_period"`
+
+	// BatchSize is the maximum number of blobs to process per run.
+	BatchSize int `mapstructure:"batch_size"`
+
+	// DryRun logs what would be deleted without actually deleting.
+	DryRun bool `mapstructure:"dry_run"`
+}
+
 // Load reads configuration from the specified file and environment variables.
 // Environment variables take precedence over file values.
 // Environment variables are prefixed with ALEXANDER_ and use _ as separator.
@@ -232,6 +283,25 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("logging.format", "json")
 	v.SetDefault("logging.output", "stdout")
 	v.SetDefault("logging.time_format", time.RFC3339)
+
+	// Metrics defaults
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.port", 9091)
+	v.SetDefault("metrics.path", "/metrics")
+
+	// Rate limiting defaults
+	v.SetDefault("rate_limit.enabled", true)
+	v.SetDefault("rate_limit.requests_per_second", 100)
+	v.SetDefault("rate_limit.burst_size", 200)
+	v.SetDefault("rate_limit.bandwidth_enabled", false)
+	v.SetDefault("rate_limit.bytes_per_second", 100*1024*1024) // 100 MB/s
+
+	// Garbage collection defaults
+	v.SetDefault("gc.enabled", true)
+	v.SetDefault("gc.interval", 1*time.Hour)
+	v.SetDefault("gc.grace_period", 24*time.Hour)
+	v.SetDefault("gc.batch_size", 1000)
+	v.SetDefault("gc.dry_run", false)
 }
 
 // Validate checks the configuration for required values and valid ranges.

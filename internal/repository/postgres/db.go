@@ -70,6 +70,11 @@ func (db *DB) Close() {
 	db.logger.Info().Msg("database connection pool closed")
 }
 
+// Ping checks the database connection.
+func (db *DB) Ping(ctx context.Context) error {
+	return db.Pool.Ping(ctx)
+}
+
 // Health checks the database connection health.
 func (db *DB) Health(ctx context.Context) error {
 	return db.Pool.Ping(ctx)

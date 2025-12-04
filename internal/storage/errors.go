@@ -16,3 +16,8 @@ var (
 	// ErrInvalidContentHash indicates that the content hash is invalid.
 	ErrInvalidContentHash = errors.New("invalid content hash")
 )
+
+// IsNotFound returns true if the error is ErrBlobNotFound.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrBlobNotFound)
+}
