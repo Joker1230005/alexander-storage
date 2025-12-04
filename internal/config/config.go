@@ -1,0 +1,290 @@
+// Package config provides configuration management for the Alexander storage server.
+// Configuration can be loaded from YAML files and environment variables.
+package config
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+// Config represents the complete application configuration.
+type Config struct {
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Redis    RedisConfig    `mapstructure:"redis"`
+	Storage  StorageConfig  `mapstructure:"storage"`
+	Auth     AuthConfig     `mapstructure:"auth"`
+	Logging  LoggingConfig  `mapstructure:"logging"`
+}
+
+// ServerConfig holds HTTP server settings.
+type ServerConfig struct {
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout     time.Duration `mapstructure:"idle_timeout"`
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+	MaxBodySize     int64         `mapstructure:"max_body_size"`
+}
+
+// DatabaseConfig holds PostgreSQL connection settings.
+type DatabaseConfig struct {
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	Database        string        `mapstructure:"database"`
+	SSLMode         string        `mapstructure:"ssl_mode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
+}
+
+// DSN returns the PostgreSQL connection string.
+func (c DatabaseConfig) DSN() string {
+	return fmt.Sprintf(
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Host, c.Port, c.User, c.Password, c.Database, c.SSLMode,
+	)
+}
+
+// RedisConfig holds Redis connection settings.
+type RedisConfig struct {
+	Host        string        `mapstructure:"host"`
+	Port        int           `mapstructure:"port"`
+	Password    string        `mapstructure:"password"`
+	DB          int           `mapstructure:"db"`
+	PoolSize    int           `mapstructure:"pool_size"`
+	DialTimeout time.Duration `mapstructure:"dial_timeout"`
+	Enabled     bool          `mapstructure:"enabled"`
+}
+
+// Addr returns the Redis address in host:port format.
+func (c RedisConfig) Addr() string {
+	return fmt.Sprintf("%s:%d", c.Host, c.Port)
+}
+
+// StorageConfig holds blob storage backend settings.
+type StorageConfig struct {
+	Backend   string                `mapstructure:"backend"`
+	DataDir   string                `mapstructure:"data_dir"`
+	TempDir   string                `mapstructure:"temp_dir"`
+	S3        S3StorageConfig       `mapstructure:"s3"`
+	Multipart MultipartUploadConfig `mapstructure:"multipart"`
+}
+
+// S3StorageConfig holds S3 backend settings (for future use).
+type S3StorageConfig struct {
+	Endpoint        string `mapstructure:"endpoint"`
+	Region          string `mapstructure:"region"`
+	Bucket          string `mapstructure:"bucket"`
+	AccessKeyID     string `mapstructure:"access_key_id"`
+	SecretAccessKey string `mapstructure:"secret_access_key"`
+	UseSSL          bool   `mapstructure:"use_ssl"`
+}
+
+// MultipartUploadConfig holds multipart upload settings.
+type MultipartUploadConfig struct {
+	MinPartSize      int64         `mapstructure:"min_part_size"`
+	MaxPartSize      int64         `mapstructure:"max_part_size"`
+	MaxParts         int           `mapstructure:"max_parts"`
+	UploadExpiration time.Duration `mapstructure:"upload_expiration"`
+}
+
+// AuthConfig holds authentication settings.
+type AuthConfig struct {
+	// EncryptionKey is the 32-byte key used for AES-256-GCM encryption of secret keys.
+	// Must be exactly 32 bytes (256 bits) for AES-256.
+	EncryptionKey string `mapstructure:"encryption_key"`
+
+	// Region is the default region for AWS v4 signature verification.
+	Region string `mapstructure:"region"`
+
+	// Service is the service name for AWS v4 signature verification.
+	Service string `mapstructure:"service"`
+
+	// PresignedURLExpiration is the default expiration time for presigned URLs.
+	PresignedURLExpiration time.Duration `mapstructure:"presigned_url_expiration"`
+
+	// MaxSignatureAge is the maximum age of a signature before it's considered expired.
+	MaxSignatureAge time.Duration `mapstructure:"max_signature_age"`
+}
+
+// GetEncryptionKey returns the encryption key as a byte slice.
+// Returns an error if the key is not exactly 32 bytes.
+func (c AuthConfig) GetEncryptionKey() ([]byte, error) {
+	key := []byte(c.EncryptionKey)
+	if len(key) != 32 {
+		return nil, fmt.Errorf("encryption key must be exactly 32 bytes, got %d", len(key))
+	}
+	return key, nil
+}
+
+// LoggingConfig holds logging settings.
+type LoggingConfig struct {
+	Level      string `mapstructure:"level"`
+	Format     string `mapstructure:"format"`
+	Output     string `mapstructure:"output"`
+	TimeFormat string `mapstructure:"time_format"`
+}
+
+// Load reads configuration from the specified file and environment variables.
+// Environment variables take precedence over file values.
+// Environment variables are prefixed with ALEXANDER_ and use _ as separator.
+func Load(configPath string) (*Config, error) {
+	v := viper.New()
+
+	// Set defaults
+	setDefaults(v)
+
+	// Environment variable configuration
+	v.SetEnvPrefix("ALEXANDER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Config file configuration
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+	} else {
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("./configs")
+		v.AddConfigPath("/etc/alexander")
+	}
+
+	// Read config file (optional - environment variables can be used instead)
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("error reading config file: %w", err)
+		}
+		// Config file not found is acceptable - use defaults and env vars
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// setDefaults sets default configuration values.
+func setDefaults(v *viper.Viper) {
+	// Server defaults
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", 9000)
+	v.SetDefault("server.read_timeout", 30*time.Second)
+	v.SetDefault("server.write_timeout", 60*time.Second)
+	v.SetDefault("server.idle_timeout", 120*time.Second)
+	v.SetDefault("server.shutdown_timeout", 30*time.Second)
+	v.SetDefault("server.max_body_size", 5*1024*1024*1024) // 5GB
+
+	// Database defaults
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.user", "alexander")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.database", "alexander")
+	v.SetDefault("database.ssl_mode", "prefer")
+	v.SetDefault("database.max_open_conns", 25)
+	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.conn_max_lifetime", 5*time.Minute)
+	v.SetDefault("database.conn_max_idle_time", 5*time.Minute)
+
+	// Redis defaults
+	v.SetDefault("redis.host", "localhost")
+	v.SetDefault("redis.port", 6379)
+	v.SetDefault("redis.password", "")
+	v.SetDefault("redis.db", 0)
+	v.SetDefault("redis.pool_size", 10)
+	v.SetDefault("redis.dial_timeout", 5*time.Second)
+	v.SetDefault("redis.enabled", true)
+
+	// Storage defaults
+	v.SetDefault("storage.backend", "filesystem")
+	v.SetDefault("storage.data_dir", "./data/blobs")
+	v.SetDefault("storage.temp_dir", "./data/temp")
+	v.SetDefault("storage.multipart.min_part_size", 5*1024*1024)      // 5MB
+	v.SetDefault("storage.multipart.max_part_size", 5*1024*1024*1024) // 5GB
+	v.SetDefault("storage.multipart.max_parts", 10000)
+	v.SetDefault("storage.multipart.upload_expiration", 7*24*time.Hour) // 7 days
+
+	// Auth defaults
+	v.SetDefault("auth.encryption_key", "") // Must be provided
+	v.SetDefault("auth.region", "us-east-1")
+	v.SetDefault("auth.service", "s3")
+	v.SetDefault("auth.presigned_url_expiration", 15*time.Minute)
+	v.SetDefault("auth.max_signature_age", 15*time.Minute)
+
+	// Logging defaults
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.output", "stdout")
+	v.SetDefault("logging.time_format", time.RFC3339)
+}
+
+// Validate checks the configuration for required values and valid ranges.
+func (c *Config) Validate() error {
+	// Validate server configuration
+	if c.Server.Port < 1 || c.Server.Port > 65535 {
+		return fmt.Errorf("server.port must be between 1 and 65535")
+	}
+
+	// Validate database configuration
+	if c.Database.Host == "" {
+		return fmt.Errorf("database.host is required")
+	}
+	if c.Database.User == "" {
+		return fmt.Errorf("database.user is required")
+	}
+	if c.Database.Database == "" {
+		return fmt.Errorf("database.database is required")
+	}
+
+	// Validate storage configuration
+	if c.Storage.Backend == "" {
+		return fmt.Errorf("storage.backend is required")
+	}
+	if c.Storage.Backend == "filesystem" && c.Storage.DataDir == "" {
+		return fmt.Errorf("storage.data_dir is required for filesystem backend")
+	}
+
+	// Validate auth configuration
+	if c.Auth.EncryptionKey != "" {
+		if len(c.Auth.EncryptionKey) != 32 {
+			return fmt.Errorf("auth.encryption_key must be exactly 32 characters")
+		}
+	}
+
+	// Validate logging configuration
+	validLevels := map[string]bool{
+		"trace": true, "debug": true, "info": true,
+		"warn": true, "error": true, "fatal": true, "panic": true,
+	}
+	if !validLevels[strings.ToLower(c.Logging.Level)] {
+		return fmt.Errorf("logging.level must be one of: trace, debug, info, warn, error, fatal, panic")
+	}
+
+	return nil
+}
+
+// MustLoad loads configuration or panics on error.
+// Useful for main function initialization.
+func MustLoad(configPath string) *Config {
+	cfg, err := Load(configPath)
+	if err != nil {
+		panic(fmt.Sprintf("failed to load configuration: %v", err))
+	}
+	return cfg
+}

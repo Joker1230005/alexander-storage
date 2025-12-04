@@ -54,21 +54,6 @@ type Cache interface {
 	Decrement(ctx context.Context, key string, delta int64) (int64, error)
 }
 
-// CacheError represents a cache error type.
-type CacheError string
-
-const (
-	// ErrCacheMiss indicates the key was not found in cache.
-	ErrCacheMiss CacheError = "cache miss"
-
-	// ErrCacheUnavailable indicates the cache is unavailable.
-	ErrCacheUnavailable CacheError = "cache unavailable"
-)
-
-func (e CacheError) Error() string {
-	return string(e)
-}
-
 // =============================================================================
 // Distributed Lock Interface (Redis)
 // =============================================================================

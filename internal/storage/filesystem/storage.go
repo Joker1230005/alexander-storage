@@ -1,0 +1,324 @@
+// Package filesystem provides a filesystem-based blob storage backend.
+package filesystem
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+
+	"github.com/rs/zerolog"
+
+	"github.com/prn-tf/alexander-storage/internal/storage"
+)
+
+// Storage implements storage.Backend using the local filesystem.
+type Storage struct {
+	dataDir    string
+	tempDir    string
+	pathConfig storage.PathConfig
+	logger     zerolog.Logger
+	mu         sync.RWMutex
+}
+
+// Config holds configuration for the filesystem storage.
+type Config struct {
+	DataDir string
+	TempDir string
+}
+
+// NewStorage creates a new filesystem storage backend.
+func NewStorage(cfg Config, logger zerolog.Logger) (*Storage, error) {
+	// Ensure directories exist
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create data directory: %w", err)
+	}
+	if err := os.MkdirAll(cfg.TempDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	// Convert to absolute paths
+	dataDir, err := filepath.Abs(cfg.DataDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for data dir: %w", err)
+	}
+	tempDir, err := filepath.Abs(cfg.TempDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for temp dir: %w", err)
+	}
+
+	logger.Info().
+		Str("data_dir", dataDir).
+		Str("temp_dir", tempDir).
+		Msg("filesystem storage initialized")
+
+	return &Storage{
+		dataDir:    dataDir,
+		tempDir:    tempDir,
+		pathConfig: storage.DefaultPathConfig(dataDir),
+		logger:     logger,
+	}, nil
+}
+
+// Store stores content from the reader and returns the content hash.
+// The content is first written to a temp file, then moved to its final location.
+func (s *Storage) Store(ctx context.Context, reader io.Reader, size int64) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Create temp file
+	tempFile, err := os.CreateTemp(s.tempDir, "upload-*")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tempPath := tempFile.Name()
+
+	// Ensure cleanup on error
+	success := false
+	defer func() {
+		if !success {
+			_ = os.Remove(tempPath)
+		}
+	}()
+
+	// Create streaming hasher
+	hasher := sha256.New()
+
+	// Wrap reader to compute hash while copying
+	teeReader := io.TeeReader(reader, hasher)
+
+	// Copy content to temp file
+	written, err := io.Copy(tempFile, teeReader)
+	if err != nil {
+		_ = tempFile.Close()
+		return "", fmt.Errorf("failed to write to temp file: %w", err)
+	}
+
+	if err := tempFile.Close(); err != nil {
+		return "", fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Verify size if provided
+	if size > 0 && written != size {
+		return "", fmt.Errorf("size mismatch: expected %d, got %d", size, written)
+	}
+
+	// Get the content hash
+	contentHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Generate storage path based on hash
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	// Check if blob already exists (deduplication)
+	if _, err := os.Stat(fullPath); err == nil {
+		// Blob already exists, just remove temp file
+		_ = os.Remove(tempPath)
+		s.logger.Debug().
+			Str("content_hash", contentHash).
+			Msg("blob already exists, skipping storage")
+		success = true
+		return contentHash, nil
+	}
+
+	// Create target directory
+	targetDir := filepath.Dir(fullPath)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create target directory: %w", err)
+	}
+
+	// Move temp file to final location
+	if err := os.Rename(tempPath, fullPath); err != nil {
+		// If rename fails (cross-device), fall back to copy
+		if err := copyFile(tempPath, fullPath); err != nil {
+			return "", fmt.Errorf("failed to move file to storage: %w", err)
+		}
+		_ = os.Remove(tempPath)
+	}
+
+	s.logger.Debug().
+		Str("content_hash", contentHash).
+		Str("storage_path", fullPath).
+		Int64("size", written).
+		Msg("blob stored successfully")
+
+	success = true
+	return contentHash, nil
+}
+
+// Retrieve returns a reader for the blob with the given content hash.
+func (s *Storage) Retrieve(ctx context.Context, contentHash string) (io.ReadCloser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, storage.ErrBlobNotFound
+		}
+		return nil, fmt.Errorf("failed to open blob: %w", err)
+	}
+
+	return file, nil
+}
+
+// RetrieveRange returns a reader for a range of bytes from the blob.
+func (s *Storage) RetrieveRange(ctx context.Context, contentHash string, offset, length int64) (io.ReadCloser, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, storage.ErrBlobNotFound
+		}
+		return nil, fmt.Errorf("failed to open blob: %w", err)
+	}
+
+	// Seek to offset
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("failed to seek to offset: %w", err)
+	}
+
+	// Return a limited reader if length is specified
+	if length > 0 {
+		return &limitedReadCloser{
+			reader: io.LimitReader(file, length),
+			closer: file,
+		}, nil
+	}
+
+	return file, nil
+}
+
+// Delete removes a blob from storage.
+func (s *Storage) Delete(ctx context.Context, contentHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	if err := os.Remove(fullPath); err != nil {
+		if os.IsNotExist(err) {
+			return storage.ErrBlobNotFound
+		}
+		return fmt.Errorf("failed to delete blob: %w", err)
+	}
+
+	// Try to remove empty parent directories
+	s.cleanupEmptyDirs(filepath.Dir(fullPath))
+
+	s.logger.Debug().
+		Str("content_hash", contentHash).
+		Msg("blob deleted successfully")
+
+	return nil
+}
+
+// Exists checks if a blob exists in storage.
+func (s *Storage) Exists(ctx context.Context, contentHash string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	_, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to check blob existence: %w", err)
+	}
+
+	return true, nil
+}
+
+// GetSize returns the size of a blob in bytes.
+func (s *Storage) GetSize(ctx context.Context, contentHash string) (int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	fullPath := storage.ComputePath(s.pathConfig, contentHash)
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, storage.ErrBlobNotFound
+		}
+		return 0, fmt.Errorf("failed to get blob size: %w", err)
+	}
+
+	return info.Size(), nil
+}
+
+// GetPath returns the storage path for a blob (for database records).
+func (s *Storage) GetPath(contentHash string) string {
+	return storage.ComputePath(s.pathConfig, contentHash)
+}
+
+// GetDataDir returns the data directory path.
+func (s *Storage) GetDataDir() string {
+	return s.dataDir
+}
+
+// GetTempDir returns the temp directory path.
+func (s *Storage) GetTempDir() string {
+	return s.tempDir
+}
+
+// cleanupEmptyDirs removes empty parent directories up to the data directory.
+func (s *Storage) cleanupEmptyDirs(dir string) {
+	for dir != s.dataDir && dir != "" {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			break
+		}
+		if err := os.Remove(dir); err != nil {
+			break
+		}
+		dir = filepath.Dir(dir)
+	}
+}
+
+// copyFile copies a file from src to dst.
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	return err
+}
+
+// limitedReadCloser wraps a limited reader with a closer.
+type limitedReadCloser struct {
+	reader io.Reader
+	closer io.Closer
+}
+
+func (l *limitedReadCloser) Read(p []byte) (int, error) {
+	return l.reader.Read(p)
+}
+
+func (l *limitedReadCloser) Close() error {
+	return l.closer.Close()
+}
+
+// Ensure Storage implements storage.Backend
+var _ storage.Backend = (*Storage)(nil)

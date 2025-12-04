@@ -180,7 +180,7 @@
 
 ### Decision 1: Content-Addressable Storage (CAS)
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Need to store object data efficiently with potential for deduplication.
@@ -202,7 +202,7 @@
 
 ### Decision 2: PostgreSQL for Metadata
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Need reliable metadata storage with ACID guarantees.
@@ -225,7 +225,7 @@
 
 ### Decision 3: Single-Table Versioning with Partial Index
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Need to support S3-compatible object versioning.
@@ -244,7 +244,7 @@
 
 ### Decision 4: AES-256-GCM for Secret Key Encryption
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Secret keys must be stored securely but decrypted at runtime for signature verification.
@@ -267,7 +267,7 @@
 
 ### Decision 5: 2-Level Directory Sharding
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Storing millions of files in a single directory causes filesystem performance issues.
@@ -289,7 +289,7 @@ Path: /data/ab/cd/abcdef1234567890...
 
 ### Decision 6: Concatenate Multipart Uploads (Phase 1)
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Need to support multipart uploads for large files.
@@ -309,7 +309,7 @@ Path: /data/ab/cd/abcdef1234567890...
 
 ### Decision 7: AWS v4 Signature Implementation
 
-**Date**: 2024-12-04  
+**Date**: 2025-12-04  
 **Status**: ✅ Approved  
 
 **Context**: Need S3 API compatibility with standard tools (aws-cli, boto3, terraform).
@@ -334,7 +334,7 @@ Path: /data/ab/cd/abcdef1234567890...
 Implementing configuration loading, PostgreSQL repositories, and IAM services
 
 ### Last Updated
-2024-12-04
+2025-12-04
 
 ### Files Modified This Session
 - `go.mod` - Project module definition
@@ -535,4 +535,4 @@ make test
 
 ---
 
-*Last Updated: 2024-12-04*
+*Last Updated: 2025-12-04*
