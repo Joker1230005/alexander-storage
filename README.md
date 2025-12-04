@@ -1,5 +1,11 @@
 # Alexander Storage
 
+[![CI](https://github.com/neuralforgeone/alexander-storage/actions/workflows/ci.yml/badge.svg)](https://github.com/neuralforgeone/alexander-storage/actions/workflows/ci.yml)
+[![Release](https://github.com/neuralforgeone/alexander-storage/actions/workflows/release.yml/badge.svg)](https://github.com/neuralforgeone/alexander-storage/actions/workflows/release.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/neuralforgeone/alexander-storage)](https://goreportcard.com/report/github.com/neuralforgeone/alexander-storage)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/neuralforgeone/alexander-storage)](https://go.dev/)
+
 **A lightweight, S3-compatible object storage server written in Go.**
 
 Alexander Storage is a self-hosted object storage system optimized for **archival**, **backups**, and **homelab** environments. It provides compatibility with the AWS S3 API, allowing you to use existing tools like `aws-cli`, `boto3`, and Terraform without modification.
