@@ -161,7 +161,6 @@ func (t *queryTracer) TraceQueryEnd(ctx context.Context, conn *pgx.Conn, data pg
 type Querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Exec(ctx context.Context, sql string, args ...any) (pgx.CommandTag, error)
 }
 
 // Ensure both Pool and Tx implement Querier

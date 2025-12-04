@@ -112,12 +112,126 @@ func (c *Cache) Set(ctx context.Context, key string, value []byte, ttl time.Dura
 	return nil
 }
 
+// SetNX sets a value only if the key doesn't exist.
+func (c *Cache) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
+	if ttl <= 0 {
+		ttl = c.ttl
+	}
+	result, err := c.client.client.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to setnx in cache: %w", err)
+	}
+	return result, nil
+}
+
 // Delete removes a value from the cache.
 func (c *Cache) Delete(ctx context.Context, key string) error {
 	if err := c.client.client.Del(ctx, key).Err(); err != nil {
 		return fmt.Errorf("failed to delete from cache: %w", err)
 	}
 	return nil
+}
+
+// Exists checks if a key exists.
+func (c *Cache) Exists(ctx context.Context, key string) (bool, error) {
+	result, err := c.client.client.Exists(ctx, key).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to check key existence: %w", err)
+	}
+	return result > 0, nil
+}
+
+// Expire sets or updates the TTL for a key.
+func (c *Cache) Expire(ctx context.Context, key string, ttl time.Duration) error {
+	if err := c.client.client.Expire(ctx, key, ttl).Err(); err != nil {
+		return fmt.Errorf("failed to set expiration: %w", err)
+	}
+	return nil
+}
+
+// TTL returns the remaining TTL for a key.
+func (c *Cache) TTL(ctx context.Context, key string) (time.Duration, error) {
+	ttl, err := c.client.client.TTL(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get TTL: %w", err)
+	}
+	// Redis returns -2 if key doesn't exist, -1 if no TTL set
+	return ttl, nil
+}
+
+// GetMulti retrieves multiple values by keys.
+func (c *Cache) GetMulti(ctx context.Context, keys []string) (map[string][]byte, error) {
+	if len(keys) == 0 {
+		return make(map[string][]byte), nil
+	}
+
+	vals, err := c.client.client.MGet(ctx, keys...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get multiple keys: %w", err)
+	}
+
+	result := make(map[string][]byte, len(keys))
+	for i, val := range vals {
+		if val != nil {
+			switch v := val.(type) {
+			case string:
+				result[keys[i]] = []byte(v)
+			case []byte:
+				result[keys[i]] = v
+			}
+		}
+	}
+	return result, nil
+}
+
+// SetMulti stores multiple values.
+func (c *Cache) SetMulti(ctx context.Context, items map[string][]byte, ttl time.Duration) error {
+	if len(items) == 0 {
+		return nil
+	}
+	if ttl <= 0 {
+		ttl = c.ttl
+	}
+
+	pipe := c.client.client.Pipeline()
+	for key, value := range items {
+		pipe.Set(ctx, key, value, ttl)
+	}
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to set multiple keys: %w", err)
+	}
+	return nil
+}
+
+// DeleteMulti removes multiple values.
+func (c *Cache) DeleteMulti(ctx context.Context, keys ...string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	if err := c.client.client.Del(ctx, keys...).Err(); err != nil {
+		return fmt.Errorf("failed to delete multiple keys: %w", err)
+	}
+	return nil
+}
+
+// Increment atomically increments an integer value.
+func (c *Cache) Increment(ctx context.Context, key string, delta int64) (int64, error) {
+	result, err := c.client.client.IncrBy(ctx, key, delta).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to increment key: %w", err)
+	}
+	return result, nil
+}
+
+// Decrement atomically decrements an integer value.
+func (c *Cache) Decrement(ctx context.Context, key string, delta int64) (int64, error) {
+	result, err := c.client.client.DecrBy(ctx, key, delta).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to decrement key: %w", err)
+	}
+	return result, nil
 }
 
 // DeletePattern removes values matching a pattern from the cache.

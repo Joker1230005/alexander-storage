@@ -25,7 +25,7 @@ func NewUserRepository(db *DB) repository.UserRepository {
 // Create creates a new user.
 func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 	query := `
-		INSERT INTO users (username, email, display_name, status, metadata, created_at, updated_at)
+		INSERT INTO users (username, email, password_hash, is_active, is_admin, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
 	`
@@ -33,9 +33,9 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 	err := r.db.Pool.QueryRow(ctx, query,
 		user.Username,
 		user.Email,
-		user.DisplayName,
-		user.Status,
-		user.Metadata,
+		user.PasswordHash,
+		user.IsActive,
+		user.IsAdmin,
 		user.CreatedAt,
 		user.UpdatedAt,
 	).Scan(&user.ID)
@@ -53,7 +53,7 @@ func (r *userRepository) Create(ctx context.Context, user *domain.User) error {
 // GetByID retrieves a user by ID.
 func (r *userRepository) GetByID(ctx context.Context, id int64) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, status, metadata, created_at, updated_at
+		SELECT id, username, email, password_hash, is_active, is_admin, created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -63,9 +63,9 @@ func (r *userRepository) GetByID(ctx context.Context, id int64) (*domain.User, e
 		&user.ID,
 		&user.Username,
 		&user.Email,
-		&user.DisplayName,
-		&user.Status,
-		&user.Metadata,
+		&user.PasswordHash,
+		&user.IsActive,
+		&user.IsAdmin,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -83,7 +83,7 @@ func (r *userRepository) GetByID(ctx context.Context, id int64) (*domain.User, e
 // GetByUsername retrieves a user by username.
 func (r *userRepository) GetByUsername(ctx context.Context, username string) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, status, metadata, created_at, updated_at
+		SELECT id, username, email, password_hash, is_active, is_admin, created_at, updated_at
 		FROM users
 		WHERE username = $1
 	`
@@ -93,9 +93,9 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 		&user.ID,
 		&user.Username,
 		&user.Email,
-		&user.DisplayName,
-		&user.Status,
-		&user.Metadata,
+		&user.PasswordHash,
+		&user.IsActive,
+		&user.IsAdmin,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -113,7 +113,7 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 // GetByEmail retrieves a user by email.
 func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.User, error) {
 	query := `
-		SELECT id, username, email, display_name, status, metadata, created_at, updated_at
+		SELECT id, username, email, password_hash, is_active, is_admin, created_at, updated_at
 		FROM users
 		WHERE email = $1
 	`
@@ -123,9 +123,9 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 		&user.ID,
 		&user.Username,
 		&user.Email,
-		&user.DisplayName,
-		&user.Status,
-		&user.Metadata,
+		&user.PasswordHash,
+		&user.IsActive,
+		&user.IsAdmin,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -144,7 +144,7 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 	query := `
 		UPDATE users
-		SET username = $2, email = $3, display_name = $4, status = $5, metadata = $6, updated_at = $7
+		SET username = $2, email = $3, password_hash = $4, is_active = $5, is_admin = $6, updated_at = $7
 		WHERE id = $1
 	`
 
@@ -154,9 +154,9 @@ func (r *userRepository) Update(ctx context.Context, user *domain.User) error {
 		user.ID,
 		user.Username,
 		user.Email,
-		user.DisplayName,
-		user.Status,
-		user.Metadata,
+		user.PasswordHash,
+		user.IsActive,
+		user.IsAdmin,
 		user.UpdatedAt,
 	)
 
@@ -199,7 +199,7 @@ func (r *userRepository) List(ctx context.Context, opts repository.ListOptions) 
 	}
 
 	query := `
-		SELECT id, username, email, display_name, status, metadata, created_at, updated_at
+		SELECT id, username, email, password_hash, is_active, is_admin, created_at, updated_at
 		FROM users
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -218,9 +218,9 @@ func (r *userRepository) List(ctx context.Context, opts repository.ListOptions) 
 			&user.ID,
 			&user.Username,
 			&user.Email,
-			&user.DisplayName,
-			&user.Status,
-			&user.Metadata,
+			&user.PasswordHash,
+			&user.IsActive,
+			&user.IsAdmin,
 			&user.CreatedAt,
 			&user.UpdatedAt,
 		)
