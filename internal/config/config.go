@@ -21,6 +21,13 @@ type Config struct {
 	Metrics   MetricsConfig   `mapstructure:"metrics"`
 	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
 	GC        GCConfig        `mapstructure:"gc"`
+
+	// Fusion Engine v2.0 configurations
+	Encryption EncryptionConfig `mapstructure:"encryption"`
+	Versioning VersioningConfig `mapstructure:"versioning"`
+	Cluster    ClusterConfig    `mapstructure:"cluster"`
+	Tiering    TieringConfig    `mapstructure:"tiering"`
+	Migration  MigrationConfig  `mapstructure:"migration"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -207,6 +214,134 @@ type GCConfig struct {
 	DryRun bool `mapstructure:"dry_run"`
 }
 
+// EncryptionConfig holds encryption settings for Fusion Engine.
+type EncryptionConfig struct {
+	// Scheme is the encryption algorithm: "aes-256-gcm" or "chacha20-poly1305-stream".
+	// Default: "chacha20-poly1305-stream" for new deployments.
+	Scheme string `mapstructure:"scheme"`
+
+	// ChunkSize is the chunk size for streaming encryption (in bytes).
+	// Default: 16MB (16777216). Must be between 1MB and 64MB.
+	ChunkSize int `mapstructure:"chunk_size"`
+
+	// MasterKey is the hex-encoded 32-byte master key.
+	// If not set, falls back to auth.sse_master_key.
+	MasterKey string `mapstructure:"master_key"`
+}
+
+// VersioningConfig holds delta versioning settings.
+type VersioningConfig struct {
+	// DeltaEnabled enables delta versioning for space savings.
+	DeltaEnabled bool `mapstructure:"delta_enabled"`
+
+	// CDCAlgorithm is the content-defined chunking algorithm: "fastcdc".
+	CDCAlgorithm string `mapstructure:"cdc_algorithm"`
+
+	// MinChunkSize is the minimum CDC chunk size (default: 2KB).
+	MinChunkSize int `mapstructure:"min_chunk_size"`
+
+	// AvgChunkSize is the average CDC chunk size (default: 64KB).
+	AvgChunkSize int `mapstructure:"avg_chunk_size"`
+
+	// MaxChunkSize is the maximum CDC chunk size (default: 1MB).
+	MaxChunkSize int `mapstructure:"max_chunk_size"`
+
+	// MinSavingsThreshold is the minimum savings ratio to use delta (0.0-1.0).
+	// If delta doesn't save at least this much, store full blob instead.
+	MinSavingsThreshold float64 `mapstructure:"min_savings_threshold"`
+}
+
+// ClusterConfig holds multi-node cluster settings.
+type ClusterConfig struct {
+	// Enabled enables multi-node clustering.
+	Enabled bool `mapstructure:"enabled"`
+
+	// NodeID is the unique identifier for this node.
+	NodeID string `mapstructure:"node_id"`
+
+	// NodeRole is the role of this node: "hot", "warm", or "cold".
+	NodeRole string `mapstructure:"node_role"`
+
+	// GRPCPort is the port for gRPC inter-node communication.
+	GRPCPort int `mapstructure:"grpc_port"`
+
+	// GRPCAddress is the address other nodes use to reach this node.
+	// If empty, uses server.host:grpc_port.
+	GRPCAddress string `mapstructure:"grpc_address"`
+
+	// Nodes is the list of other nodes in the cluster.
+	Nodes []NodeConfig `mapstructure:"nodes"`
+
+	// HeartbeatInterval is how often to send heartbeats.
+	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
+
+	// HeartbeatTimeout is how long before a node is considered unhealthy.
+	HeartbeatTimeout time.Duration `mapstructure:"heartbeat_timeout"`
+
+	// ReplicationFactor is the default number of replicas for blobs.
+	ReplicationFactor int `mapstructure:"replication_factor"`
+}
+
+// NodeConfig holds configuration for a remote node.
+type NodeConfig struct {
+	// Address is the gRPC address (host:port) of the node.
+	Address string `mapstructure:"address"`
+
+	// Role is the role of this node: "hot", "warm", or "cold".
+	Role string `mapstructure:"role"`
+}
+
+// TieringConfig holds automatic tiering settings.
+type TieringConfig struct {
+	// Enabled enables automatic tiering.
+	Enabled bool `mapstructure:"enabled"`
+
+	// EvaluationInterval is how often to evaluate tiering policies.
+	EvaluationInterval time.Duration `mapstructure:"evaluation_interval"`
+
+	// Policies is the list of tiering policies.
+	Policies []TieringPolicyConfig `mapstructure:"policies"`
+}
+
+// TieringPolicyConfig holds a single tiering policy.
+type TieringPolicyConfig struct {
+	// Name is the unique name for this policy.
+	Name string `mapstructure:"name"`
+
+	// Priority is the evaluation order (lower = higher priority).
+	Priority int `mapstructure:"priority"`
+
+	// Enabled indicates if the policy is active.
+	Enabled bool `mapstructure:"enabled"`
+
+	// Condition is the condition expression (e.g., "last_accessed > 30d").
+	Condition string `mapstructure:"condition"`
+
+	// Action is the action to take: "move_to_cold", "move_to_warm", "delete", "keep".
+	Action string `mapstructure:"action"`
+
+	// TargetTier is the target tier for move actions.
+	TargetTier string `mapstructure:"target_tier"`
+}
+
+// MigrationConfig holds background migration settings.
+type MigrationConfig struct {
+	// BackgroundEnabled enables background migration worker.
+	BackgroundEnabled bool `mapstructure:"background_enabled"`
+
+	// BatchSize is the number of blobs to process per batch.
+	BatchSize int `mapstructure:"batch_size"`
+
+	// Interval is the interval between migration batches.
+	Interval time.Duration `mapstructure:"interval"`
+
+	// LazyFallback enables lazy migration on access.
+	LazyFallback bool `mapstructure:"lazy_fallback"`
+
+	// MaxRetries is the maximum retry attempts for failed migrations.
+	MaxRetries int `mapstructure:"max_retries"`
+}
+
 // Load reads configuration from the specified file and environment variables.
 // Environment variables take precedence over file values.
 // Environment variables are prefixed with ALEXANDER_ and use _ as separator.
@@ -332,6 +467,40 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("gc.grace_period", 24*time.Hour)
 	v.SetDefault("gc.batch_size", 1000)
 	v.SetDefault("gc.dry_run", false)
+
+	// Encryption defaults (Fusion Engine v2.0)
+	v.SetDefault("encryption.scheme", "chacha20-poly1305-stream")
+	v.SetDefault("encryption.chunk_size", 16*1024*1024) // 16MB
+	v.SetDefault("encryption.master_key", "")
+
+	// Versioning defaults (Fusion Engine v2.0)
+	v.SetDefault("versioning.delta_enabled", false)
+	v.SetDefault("versioning.cdc_algorithm", "fastcdc")
+	v.SetDefault("versioning.min_chunk_size", 2*1024)     // 2KB
+	v.SetDefault("versioning.avg_chunk_size", 64*1024)    // 64KB
+	v.SetDefault("versioning.max_chunk_size", 1024*1024)  // 1MB
+	v.SetDefault("versioning.min_savings_threshold", 0.2) // 20% minimum savings
+
+	// Cluster defaults (Fusion Engine v2.0)
+	v.SetDefault("cluster.enabled", false)
+	v.SetDefault("cluster.node_id", "")
+	v.SetDefault("cluster.node_role", "hot")
+	v.SetDefault("cluster.grpc_port", 9100)
+	v.SetDefault("cluster.grpc_address", "")
+	v.SetDefault("cluster.heartbeat_interval", 10*time.Second)
+	v.SetDefault("cluster.heartbeat_timeout", 30*time.Second)
+	v.SetDefault("cluster.replication_factor", 1)
+
+	// Tiering defaults (Fusion Engine v2.0)
+	v.SetDefault("tiering.enabled", false)
+	v.SetDefault("tiering.evaluation_interval", 1*time.Hour)
+
+	// Migration defaults (Fusion Engine v2.0)
+	v.SetDefault("migration.background_enabled", true)
+	v.SetDefault("migration.batch_size", 100)
+	v.SetDefault("migration.interval", 5*time.Minute)
+	v.SetDefault("migration.lazy_fallback", true)
+	v.SetDefault("migration.max_retries", 3)
 }
 
 // Validate checks the configuration for required values and valid ranges.

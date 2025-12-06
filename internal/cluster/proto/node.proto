@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package cluster;
+
+option go_package = "github.com/prn-tf/alexander-storage/internal/cluster/proto";
+
+// NodeService provides gRPC methods for inter-node communication.
+service NodeService {
+  // Ping checks if a node is alive and returns its status.
+  rpc Ping(PingRequest) returns (PingResponse);
+  
+  // TransferBlob transfers a blob from one node to another.
+  rpc TransferBlob(stream TransferBlobRequest) returns (TransferBlobResponse);
+  
+  // RetrieveBlob retrieves a blob from a remote node.
+  rpc RetrieveBlob(RetrieveBlobRequest) returns (stream RetrieveBlobResponse);
+  
+  // DeleteBlob deletes a blob from a node.
+  rpc DeleteBlob(DeleteBlobRequest) returns (DeleteBlobResponse);
+  
+  // GetBlobMetadata gets metadata about a blob on a node.
+  rpc GetBlobMetadata(GetBlobMetadataRequest) returns (GetBlobMetadataResponse);
+  
+  // ListBlobs lists all blobs on a node with optional filtering.
+  rpc ListBlobs(ListBlobsRequest) returns (stream ListBlobsResponse);
+  
+  // RegisterNode registers this node with the cluster coordinator.
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+  
+  // Heartbeat sends periodic heartbeat to cluster coordinator.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// PingRequest is an empty request for health checking.
+message PingRequest {}
+
+// PingResponse contains node status information.
+message PingResponse {
+  string node_id = 1;
+  string role = 2;  // "hot", "warm", "cold"
+  string status = 3;  // "healthy", "degraded", "unhealthy"
+  int64 uptime_seconds = 4;
+  StorageStats storage_stats = 5;
+}
+
+// StorageStats contains storage utilization information.
+message StorageStats {
+  int64 total_bytes = 1;
+  int64 used_bytes = 2;
+  int64 free_bytes = 3;
+  int64 blob_count = 4;
+}
+
+// TransferBlobRequest is streamed to transfer blob data.
+message TransferBlobRequest {
+  // First message contains metadata, subsequent messages contain data chunks.
+  oneof payload {
+    BlobMetadata metadata = 1;
+    bytes data_chunk = 2;
+  }
+}
+
+// BlobMetadata contains information about a blob being transferred.
+message BlobMetadata {
+  string content_hash = 1;
+  int64 size = 2;
+  bool is_encrypted = 3;
+  string encryption_scheme = 4;
+  string encryption_iv = 5;
+  string blob_type = 6;  // "single", "composite", "delta"
+}
+
+// TransferBlobResponse indicates the result of a blob transfer.
+message TransferBlobResponse {
+  bool success = 1;
+  string error_message = 2;
+  string content_hash = 3;
+}
+
+// RetrieveBlobRequest requests a blob by its content hash.
+message RetrieveBlobRequest {
+  string content_hash = 1;
+  int64 offset = 2;  // Optional: for range requests
+  int64 length = 3;  // Optional: for range requests (0 = full blob)
+}
+
+// RetrieveBlobResponse streams blob data back.
+message RetrieveBlobResponse {
+  // First message contains metadata, subsequent messages contain data chunks.
+  oneof payload {
+    BlobMetadata metadata = 1;
+    bytes data_chunk = 2;
+  }
+}
+
+// DeleteBlobRequest requests deletion of a blob.
+message DeleteBlobRequest {
+  string content_hash = 1;
+}
+
+// DeleteBlobResponse indicates the result of deletion.
+message DeleteBlobResponse {
+  bool success = 1;
+  string error_message = 2;
+}
+
+// GetBlobMetadataRequest requests metadata for a blob.
+message GetBlobMetadataRequest {
+  string content_hash = 1;
+}
+
+// GetBlobMetadataResponse contains blob metadata.
+message GetBlobMetadataResponse {
+  bool exists = 1;
+  BlobMetadata metadata = 2;
+}
+
+// ListBlobsRequest requests a list of blobs with optional filters.
+message ListBlobsRequest {
+  string prefix = 1;  // Optional hash prefix filter
+  int32 limit = 2;  // Max blobs to return
+  string cursor = 3;  // Pagination cursor
+}
+
+// ListBlobsResponse streams blob metadata.
+message ListBlobsResponse {
+  BlobMetadata metadata = 1;
+  string next_cursor = 2;  // Empty if no more results
+}
+
+// RegisterNodeRequest registers a node with the cluster.
+message RegisterNodeRequest {
+  string node_id = 1;
+  string address = 2;  // host:port
+  string role = 3;  // "hot", "warm", "cold"
+  StorageStats storage_stats = 4;
+}
+
+// RegisterNodeResponse confirms registration.
+message RegisterNodeResponse {
+  bool success = 1;
+  string error_message = 2;
+  repeated NodeInfo cluster_nodes = 3;  // Current cluster topology
+}
+
+// NodeInfo contains information about a cluster node.
+message NodeInfo {
+  string node_id = 1;
+  string address = 2;
+  string role = 3;
+  string status = 4;
+  int64 last_heartbeat_unix = 5;
+}
+
+// HeartbeatRequest sends periodic status update.
+message HeartbeatRequest {
+  string node_id = 1;
+  StorageStats storage_stats = 2;
+}
+
+// HeartbeatResponse acknowledges heartbeat.
+message HeartbeatResponse {
+  bool success = 1;
+  repeated NodeInfo updated_nodes = 2;  // Nodes with changed status
+}
