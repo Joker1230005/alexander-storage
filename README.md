@@ -259,9 +259,14 @@ This will:
 #### Windows (PowerShell as Administrator)
 
 ```powershell
-# One-line installer
+# Option 1: One-line installer (download and run)
 irm https://raw.githubusercontent.com/neuralforgeone/alexander-storage/main/scripts/install.ps1 | iex
+
+# Option 2: If you downloaded the release, run with bypass
+powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
+
+> **Note**: If you get a "script is not digitally signed" error, use Option 2 with `-ExecutionPolicy Bypass`.
 
 This will:
 - Download the latest release
@@ -336,6 +341,9 @@ curl -fsSL https://raw.githubusercontent.com/neuralforgeone/alexander-storage/ma
 
 # Windows (PowerShell as Administrator)
 irm https://raw.githubusercontent.com/neuralforgeone/alexander-storage/main/scripts/uninstall.ps1 | iex
+
+# Or if downloaded locally:
+powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 ```
 
 ---

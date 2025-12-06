@@ -842,22 +842,23 @@ None currently.
 ---
 
 #### TD-004: Low Test Coverage
-**Status**: ⚠️ Partial  
+**Status**: ⚠️ Partial (Improved 2025-12-06)  
 **Files**: `internal/*/`  
-**Description**: Only 3 service test files exist. Missing tests for repositories, handlers, auth, and integration.
+**Description**: Test coverage has been significantly improved with new tests for lock, cache, and middleware components.
 
 **Current Test Files**:
 - `internal/service/bucket_service_test.go` ✅
 - `internal/service/multipart_service_test.go` ✅
 - `internal/service/object_service_test.go` ✅
+- `internal/lock/memory_test.go` ✅ (NEW)
+- `internal/cache/memory/cache_test.go` ✅ (NEW)
+- `internal/middleware/csrf_test.go` ✅ (NEW)
 
 **Missing Tests**:
 - [ ] `internal/repository/postgres/*_test.go`
 - [ ] `internal/repository/sqlite/*_test.go`
 - [ ] `internal/handler/*_test.go`
 - [ ] `internal/auth/*_test.go`
-- [ ] `internal/lock/*_test.go`
-- [ ] `internal/cache/memory/*_test.go`
 - [ ] Integration tests (end-to-end S3 compatibility)
 
 **Target**: Minimum 60% code coverage
@@ -920,14 +921,14 @@ None currently.
 | TD-001 | Redis Distributed Lock | 🔴 High | ✅ Completed | 4h |
 | TD-002 | Lock Integration | 🔴 High | ✅ Completed | 8h |
 | TD-003 | Redis Cache Interface | 🟡 Medium | ✅ Verified OK | 0h |
-| TD-004 | Test Coverage | 🟡 Medium | ⚠️ Partial | 16h+ |
+| TD-004 | Test Coverage | 🟡 Medium | ⚠️ Improved | 16h+ |
 | TD-005 | Duplicate Migrations | 🟡 Medium | ✅ Completed | 0.5h |
 | TD-006 | Multipart Concatenation Bug | 🔴 Critical | ✅ Fixed | 4h |
 | TD-007 | Admin CLI | 🟢 Low | ✅ Completed | 4h |
-| TD-008 | SSE Master Key Rotation | 🟢 Low | 📋 Planned | 8h |
-| TD-009 | Dashboard CSRF Protection | 🟡 Medium | 📋 Planned | 4h |
+| TD-008 | SSE Master Key Rotation | 🟢 Low | ✅ Completed | 4h |
+| TD-009 | Dashboard CSRF Protection | 🟡 Medium | ✅ Completed | 4h |
 
-**Remaining Effort**: ~28+ hours (TD-004, TD-008, TD-009)
+**Remaining Effort**: ~16+ hours (TD-004 remaining: repository, handler, auth tests)
 
 ---
 
@@ -947,6 +948,9 @@ None currently.
 | 2025-12-06 | TD-009 | Identified | Dashboard forms need CSRF token protection |
 | 2025-12-06 | - | Fixed Dockerfile | Multi-arch build with `--platform=$BUILDPLATFORM` for cross-compilation |
 | 2025-12-06 | - | v1.0.0 Released | First stable release with install scripts and Docker images |
+| 2025-12-06 | TD-008 | ✅ Completed | Added `encrypt rotate` command with old key, dry-run, batch support |
+| 2025-12-06 | TD-009 | ✅ Completed | Added CSRF middleware with token in context, header/form validation |
+| 2025-12-06 | TD-004 | Improved | Added tests for lock, cache, and CSRF middleware |
 
 ---
 

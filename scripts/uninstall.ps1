@@ -5,7 +5,10 @@
     Uninstalls Alexander S3 Storage from Windows
 .EXAMPLE
     # Run from PowerShell as Administrator:
-    .\uninstall.ps1
+    powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
+.NOTES
+    If you get "script is not digitally signed" error, run:
+    powershell -ExecutionPolicy Bypass -File .\uninstall.ps1
 #>
 
 #Requires -RunAsAdministrator

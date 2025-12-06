@@ -31,8 +31,8 @@ type Blob struct {
 	IsEncrypted bool `json:"is_encrypted"`
 
 	// EncryptionIV is the initialization vector used for AES-GCM encryption.
-	// Empty for unencrypted blobs.
-	EncryptionIV string `json:"encryption_iv,omitempty"`
+	// Nil for unencrypted blobs.
+	EncryptionIV *string `json:"encryption_iv,omitempty"`
 
 	// CreatedAt is the timestamp when the blob was first stored.
 	CreatedAt time.Time `json:"created_at"`

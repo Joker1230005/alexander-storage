@@ -4,8 +4,14 @@
 .DESCRIPTION
     Installs Alexander S3 Storage server on Windows
 .EXAMPLE
-    # Run from PowerShell as Administrator:
+    # Run from PowerShell as Administrator (Option 1 - recommended):
+    powershell -ExecutionPolicy Bypass -File .\install.ps1
+    
+    # Or download and run directly (Option 2):
     irm https://raw.githubusercontent.com/neuralforgeone/alexander-storage/main/scripts/install.ps1 | iex
+.NOTES
+    If you get "script is not digitally signed" error, run:
+    powershell -ExecutionPolicy Bypass -File .\install.ps1
 #>
 
 #Requires -RunAsAdministrator

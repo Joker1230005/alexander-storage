@@ -135,7 +135,7 @@ func (r *blobRepository) GetByHash(ctx context.Context, contentHash string) (*do
 
 	blob.IsEncrypted = isEncrypted == 1
 	if encryptionIV != nil {
-		blob.EncryptionIV = *encryptionIV
+		blob.EncryptionIV = encryptionIV
 	}
 	blob.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	blob.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
@@ -307,7 +307,7 @@ func (r *blobRepository) ListOrphans(ctx context.Context, gracePeriod time.Durat
 
 		blob.IsEncrypted = isEncrypted == 1
 		if encryptionIV != nil {
-			blob.EncryptionIV = *encryptionIV
+			blob.EncryptionIV = encryptionIV
 		}
 		blob.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		blob.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
@@ -411,7 +411,114 @@ func (r *blobRepository) ListUnencrypted(ctx context.Context, limit int) ([]*dom
 
 		blob.IsEncrypted = isEncrypted == 1
 		if encryptionIV != nil {
-			blob.EncryptionIV = *encryptionIV
+			blob.EncryptionIV = encryptionIV
+		}
+		blob.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		blob.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
+
+		blobs = append(blobs, blob)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating blobs: %w", err)
+	}
+
+	return blobs, nil
+}
+
+// UpdateEncrypted marks a blob as encrypted with the given IV.
+func (r *blobRepository) ListEncrypted(ctx context.Context, limit int, offset int) ([]*domain.Blob, error) {
+	query := `
+		SELECT content_hash, size, storage_path, ref_count, is_encrypted, encryption_iv, created_at, last_accessed
+		FROM blobs
+		WHERE is_encrypted = 1
+		ORDER BY created_at ASC
+		LIMIT ? OFFSET ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list encrypted blobs: %w", err)
+	}
+	defer rows.Close()
+
+	var blobs []*domain.Blob
+	for rows.Next() {
+		blob := &domain.Blob{}
+		var isEncrypted int
+		var encryptionIV *string
+		var createdAt, lastAccessed string
+
+		err := rows.Scan(
+			&blob.ContentHash,
+			&blob.Size,
+			&blob.StoragePath,
+			&blob.RefCount,
+			&isEncrypted,
+			&encryptionIV,
+			&createdAt,
+			&lastAccessed,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan blob: %w", err)
+		}
+
+		blob.IsEncrypted = isEncrypted == 1
+		if encryptionIV != nil {
+			blob.EncryptionIV = encryptionIV
+		}
+		blob.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
+		blob.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)
+
+		blobs = append(blobs, blob)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating blobs: %w", err)
+	}
+
+	return blobs, nil
+}
+
+// ListAll returns all blobs up to the limit.
+func (r *blobRepository) ListAll(ctx context.Context, limit int) ([]*domain.Blob, error) {
+	query := `
+		SELECT content_hash, size, storage_path, ref_count, is_encrypted, encryption_iv, created_at, last_accessed
+		FROM blobs
+		ORDER BY created_at ASC
+		LIMIT ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list blobs: %w", err)
+	}
+	defer rows.Close()
+
+	var blobs []*domain.Blob
+	for rows.Next() {
+		blob := &domain.Blob{}
+		var isEncrypted int
+		var encryptionIV *string
+		var createdAt, lastAccessed string
+
+		err := rows.Scan(
+			&blob.ContentHash,
+			&blob.Size,
+			&blob.StoragePath,
+			&blob.RefCount,
+			&isEncrypted,
+			&encryptionIV,
+			&createdAt,
+			&lastAccessed,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan blob: %w", err)
+		}
+
+		blob.IsEncrypted = isEncrypted == 1
+		if encryptionIV != nil {
+			blob.EncryptionIV = encryptionIV
 		}
 		blob.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 		blob.LastAccessed, _ = time.Parse(time.RFC3339, lastAccessed)

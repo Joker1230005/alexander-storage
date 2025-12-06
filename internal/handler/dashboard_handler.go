@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 
 	"github.com/prn-tf/alexander-storage/internal/domain"
+	"github.com/prn-tf/alexander-storage/internal/middleware"
 	"github.com/prn-tf/alexander-storage/internal/service"
 )
 
@@ -61,10 +62,11 @@ func NewDashboardHandler(cfg DashboardConfig) (*DashboardHandler, error) {
 
 // PageData contains common page data.
 type PageData struct {
-	Title    string
-	Username string
-	Error    string
-	Success  string
+	Title     string
+	Username  string
+	Error     string
+	Success   string
+	CSRFToken string
 }
 
 // LoginPageData contains login page data.
@@ -209,14 +211,15 @@ func (h *DashboardHandler) handleDashboard(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to list buckets")
-		h.renderError(w, "Failed to load buckets", session.Username)
+		h.renderError(w, r, "Failed to load buckets", session.Username)
 		return
 	}
 
 	data := DashboardPageData{
 		PageData: PageData{
-			Title:    "Dashboard - Alexander Storage",
-			Username: session.Username,
+			Title:     "Dashboard - Alexander Storage",
+			Username:  session.Username,
+			CSRFToken: middleware.TokenFromContext(r.Context()),
 		},
 		Buckets: buckets.Buckets,
 	}
@@ -256,7 +259,7 @@ func (h *DashboardHandler) handleBucketDetail(w http.ResponseWriter, r *http.Req
 	})
 	if err != nil {
 		h.logger.Error().Err(err).Str("bucket", bucketName).Msg("Failed to get bucket")
-		h.renderError(w, "Bucket not found", session.Username)
+		h.renderError(w, r, "Bucket not found", session.Username)
 		return
 	}
 
@@ -269,8 +272,9 @@ func (h *DashboardHandler) handleBucketDetail(w http.ResponseWriter, r *http.Req
 
 	data := BucketDetailPageData{
 		PageData: PageData{
-			Title:    bucketName + " - Alexander Storage",
-			Username: session.Username,
+			Title:     bucketName + " - Alexander Storage",
+			Username:  session.Username,
+			CSRFToken: middleware.TokenFromContext(r.Context()),
 		},
 		Bucket:         bucket.Bucket,
 		LifecycleRules: rules,
@@ -398,14 +402,15 @@ func (h *DashboardHandler) handleUserList(w http.ResponseWriter, r *http.Request
 	output, err := h.userService.List(r.Context(), service.ListUsersInput{Limit: 100})
 	if err != nil {
 		h.logger.Error().Err(err).Msg("Failed to list users")
-		h.renderError(w, "Failed to load users", session.Username)
+		h.renderError(w, r, "Failed to load users", session.Username)
 		return
 	}
 
 	data := UsersPageData{
 		PageData: PageData{
-			Title:    "Users - Alexander Storage",
-			Username: session.Username,
+			Title:     "Users - Alexander Storage",
+			Username:  session.Username,
+			CSRFToken: middleware.TokenFromContext(r.Context()),
 		},
 		Users: output.Users,
 	}
@@ -497,11 +502,12 @@ func (h *DashboardHandler) render(w http.ResponseWriter, name string, data inter
 	}
 }
 
-func (h *DashboardHandler) renderError(w http.ResponseWriter, message, username string) {
+func (h *DashboardHandler) renderError(w http.ResponseWriter, r *http.Request, message, username string) {
 	data := PageData{
-		Title:    "Error - Alexander Storage",
-		Username: username,
-		Error:    message,
+		Title:     "Error - Alexander Storage",
+		Username:  username,
+		Error:     message,
+		CSRFToken: middleware.TokenFromContext(r.Context()),
 	}
 	h.render(w, "error.html", data)
 }

@@ -203,6 +203,22 @@ func (m *mockBlobRepository2) ListUnencrypted(ctx context.Context, limit int) ([
 	return args.Get(0).([]*domain.Blob), args.Error(1)
 }
 
+func (m *mockBlobRepository2) ListEncrypted(ctx context.Context, limit int, offset int) ([]*domain.Blob, error) {
+	args := m.Called(ctx, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Blob), args.Error(1)
+}
+
+func (m *mockBlobRepository2) ListAll(ctx context.Context, limit int) ([]*domain.Blob, error) {
+	args := m.Called(ctx, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Blob), args.Error(1)
+}
+
 type mockStorageBackend2 struct {
 	mock.Mock
 }

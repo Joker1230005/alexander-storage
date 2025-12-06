@@ -183,6 +183,14 @@ type BlobRepository interface {
 	// ListUnencrypted returns unencrypted blobs for migration.
 	// Used by the encrypt-blobs CLI command.
 	ListUnencrypted(ctx context.Context, limit int) ([]*domain.Blob, error)
+
+	// ListEncrypted returns encrypted blobs for key rotation.
+	// Used by the encrypt rotate CLI command.
+	ListEncrypted(ctx context.Context, limit int, offset int) ([]*domain.Blob, error)
+
+	// ListAll returns all blobs up to the limit.
+	// Used for encryption status reporting.
+	ListAll(ctx context.Context, limit int) ([]*domain.Blob, error)
 }
 
 // =============================================================================

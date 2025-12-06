@@ -1066,6 +1066,8 @@ func handleEncryptCommand(args []string) {
 		encryptRun(subArgs)
 	case "status":
 		encryptStatus(subArgs)
+	case "rotate":
+		encryptRotate(subArgs)
 	case "help", "-h", "--help":
 		printEncryptUsage()
 	default:
@@ -1083,12 +1085,14 @@ Usage:
 
 Subcommands:
   run         Encrypt unencrypted blobs
+  rotate      Re-encrypt blobs with a new master key
   status      Show encryption status
 
 Examples:
   alexander-admin encrypt status
   alexander-admin encrypt run --batch-size 100 --dry-run
-  alexander-admin encrypt run --batch-size 500`)
+  alexander-admin encrypt run --batch-size 500
+  alexander-admin encrypt rotate --old-key <hex> --batch-size 100`)
 }
 
 func encryptStatus(args []string) {
@@ -1276,6 +1280,215 @@ func encryptRun(args []string) {
 		}
 		if *dryRun {
 			fmt.Printf("\n(Dry run - no changes made)\n")
+		}
+	}
+}
+
+// encryptRotate re-encrypts all blobs with a new master key.
+// This is used for key rotation when the SSE master key needs to be changed.
+func encryptRotate(args []string) {
+	fs := flag.NewFlagSet("encrypt rotate", flag.ExitOnError)
+	oldKeyHex := fs.String("old-key", "", "Old SSE master key (64 hex characters, required)")
+	batchSize := fs.Int("batch-size", 100, "Number of blobs to process per batch")
+	dryRun := fs.Bool("dry-run", false, "Show what would be re-encrypted without making changes")
+	jsonOutput := fs.Bool("json", false, "Output in JSON format")
+	force := fs.Bool("force", false, "Skip confirmation prompt")
+
+	if err := fs.Parse(args); err != nil {
+		os.Exit(1)
+	}
+
+	if *oldKeyHex == "" {
+		fmt.Fprintln(os.Stderr, "Error: --old-key is required")
+		fmt.Fprintln(os.Stderr, "Usage: alexander-admin encrypt rotate --old-key <hex>")
+		os.Exit(1)
+	}
+
+	adminCtx, err := initAdminContext()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer adminCtx.dbCloser()
+
+	// Get new SSE master key from config
+	newKeyHex := adminCtx.cfg.Auth.SSEMasterKey
+	if newKeyHex == "" {
+		fmt.Fprintln(os.Stderr, "Error: New SSE master key not configured (auth.sse_master_key)")
+		os.Exit(1)
+	}
+
+	if *oldKeyHex == newKeyHex {
+		fmt.Fprintln(os.Stderr, "Error: Old and new keys are the same. No rotation needed.")
+		os.Exit(1)
+	}
+
+	// Initialize both encryptors
+	oldEncryptor, err := crypto.NewSSEEncryptorFromHex(*oldKeyHex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing old SSE encryptor: %v\n", err)
+		os.Exit(1)
+	}
+
+	newEncryptor, err := crypto.NewSSEEncryptorFromHex(newKeyHex)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing new SSE encryptor: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize storage backend
+	storageBackend, err := filesystem.NewStorage(filesystem.Config{
+		DataDir: adminCtx.cfg.Storage.DataDir,
+		TempDir: adminCtx.cfg.Storage.TempDir,
+	}, adminCtx.logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing storage: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Count encrypted blobs first
+	allBlobs, err := adminCtx.repos.Blob.ListAll(adminCtx.ctx, 10000)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error listing blobs: %v\n", err)
+		os.Exit(1)
+	}
+
+	var encryptedCount int
+	var totalSize int64
+	for _, blob := range allBlobs {
+		if blob.EncryptionIV != nil && *blob.EncryptionIV != "" {
+			encryptedCount++
+			totalSize += blob.Size
+		}
+	}
+
+	if encryptedCount == 0 {
+		fmt.Println("No encrypted blobs found. Nothing to rotate.")
+		return
+	}
+
+	if !*dryRun && !*force && !*jsonOutput {
+		fmt.Printf("\n⚠️  WARNING: Key Rotation\n")
+		fmt.Printf("This will re-encrypt %d blobs (%s) with the new master key.\n", encryptedCount, formatBytes(totalSize))
+		fmt.Printf("Make sure you have:\n")
+		fmt.Printf("  1. Backed up your data\n")
+		fmt.Printf("  2. Stopped all running Alexander servers\n")
+		fmt.Printf("  3. Saved the old key somewhere safe (for recovery)\n")
+		fmt.Printf("\nType 'yes' to continue: ")
+		var confirm string
+		if _, err := fmt.Scanln(&confirm); err != nil || confirm != "yes" {
+			fmt.Println("Aborted.")
+			os.Exit(0)
+		}
+	}
+
+	if *dryRun {
+		fmt.Println("Running key rotation in DRY RUN mode (no actual changes)...")
+	} else {
+		fmt.Println("Starting key rotation...")
+	}
+
+	var totalProcessed, totalRotated, totalErrors int
+	var totalBytesRotated int64
+
+	// Process in batches
+	offset := 0
+	for {
+		blobs, err := adminCtx.repos.Blob.ListEncrypted(adminCtx.ctx, *batchSize, offset)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing encrypted blobs: %v\n", err)
+			os.Exit(1)
+		}
+
+		if len(blobs) == 0 {
+			break
+		}
+
+		for _, blob := range blobs {
+			totalProcessed++
+
+			if *dryRun {
+				if !*jsonOutput {
+					fmt.Printf("Would rotate: %s (%s)\n", blob.ContentHash, formatBytes(blob.Size))
+				}
+				totalRotated++
+				totalBytesRotated += blob.Size
+				continue
+			}
+
+			// Read encrypted data
+			storagePath := storageBackend.GetPath(blob.ContentHash)
+			ciphertext, err := os.ReadFile(storagePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Decrypt with old key
+			plaintext, err := oldEncryptor.DecryptBlob(ciphertext, blob.ContentHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error decrypting blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Re-encrypt with new key
+			newCiphertext, err := newEncryptor.EncryptBlob(plaintext, blob.ContentHash)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error re-encrypting blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Write new ciphertext
+			if err := os.WriteFile(storagePath, newCiphertext, 0600); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing blob %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			// Update IV in database (first 12 bytes of new ciphertext)
+			newIV := fmt.Sprintf("%x", newCiphertext[:12])
+			if err := adminCtx.repos.Blob.UpdateEncrypted(adminCtx.ctx, blob.ContentHash, newIV); err != nil {
+				fmt.Fprintf(os.Stderr, "Error updating blob record %s: %v\n", blob.ContentHash, err)
+				totalErrors++
+				continue
+			}
+
+			totalRotated++
+			totalBytesRotated += blob.Size
+
+			if !*jsonOutput {
+				fmt.Printf("Rotated: %s (%s)\n", blob.ContentHash, formatBytes(blob.Size))
+			}
+		}
+
+		offset += len(blobs)
+	}
+
+	if *jsonOutput {
+		result := map[string]interface{}{
+			"processed":     totalProcessed,
+			"rotated":       totalRotated,
+			"errors":        totalErrors,
+			"bytes_rotated": totalBytesRotated,
+			"dry_run":       *dryRun,
+		}
+		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Println(string(jsonBytes))
+	} else {
+		fmt.Printf("\nKey Rotation Complete:\n")
+		fmt.Printf("  Processed:  %d blobs\n", totalProcessed)
+		fmt.Printf("  Rotated:    %d blobs (%s)\n", totalRotated, formatBytes(totalBytesRotated))
+		if totalErrors > 0 {
+			fmt.Printf("  Errors:     %d\n", totalErrors)
+		}
+		if *dryRun {
+			fmt.Printf("\n(Dry run - no changes made)\n")
+		} else {
+			fmt.Printf("\n✅ Key rotation complete. You can now safely delete the old key.\n")
+			fmt.Printf("   Don't forget to update the SSE master key in your backup procedures.\n")
 		}
 	}
 }

@@ -7,6 +7,16 @@
     <title>{{.Title}}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script>
+        // Configure HTMX to include CSRF token in requests
+        document.addEventListener('htmx:configRequest', function(event) {
+            // Get CSRF token from cookie or meta tag
+            var csrfToken = '{{.CSRFToken}}';
+            if (csrfToken) {
+                event.detail.headers['X-CSRF-Token'] = csrfToken;
+            }
+        });
+    </script>
 </head>
 <body class="h-full">
     {{if .Username}}
