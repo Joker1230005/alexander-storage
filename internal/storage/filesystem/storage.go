@@ -16,13 +16,88 @@ import (
 	"github.com/prn-tf/alexander-storage/internal/storage"
 )
 
+const (
+	// shardCount is the number of lock shards (256 = one per first byte of hash).
+	shardCount = 256
+)
+
+// shardedLock provides fine-grained locking based on content hash.
+// Instead of a global lock, we use 256 independent locks (one per hash prefix).
+// This allows concurrent operations on different blobs.
+type shardedLock struct {
+	locks [shardCount]sync.RWMutex
+}
+
+// lockForHash returns the shard index for a given content hash.
+func (sl *shardedLock) shardIndex(contentHash string) int {
+	if len(contentHash) < 2 {
+		return 0
+	}
+	// Use first byte of hash (2 hex chars) to determine shard
+	b, err := hex.DecodeString(contentHash[:2])
+	if err != nil || len(b) == 0 {
+		return 0
+	}
+	return int(b[0])
+}
+
+// Lock acquires write lock for the given hash shard.
+func (sl *shardedLock) Lock(contentHash string) {
+	sl.locks[sl.shardIndex(contentHash)].Lock()
+}
+
+// Unlock releases write lock for the given hash shard.
+func (sl *shardedLock) Unlock(contentHash string) {
+	sl.locks[sl.shardIndex(contentHash)].Unlock()
+}
+
+// RLock acquires read lock for the given hash shard.
+func (sl *shardedLock) RLock(contentHash string) {
+	sl.locks[sl.shardIndex(contentHash)].RLock()
+}
+
+// RUnlock releases read lock for the given hash shard.
+func (sl *shardedLock) RUnlock(contentHash string) {
+	sl.locks[sl.shardIndex(contentHash)].RUnlock()
+}
+
+// LockAll acquires write locks on all shards (for global operations).
+func (sl *shardedLock) LockAll() {
+	for i := range sl.locks {
+		sl.locks[i].Lock()
+	}
+}
+
+// UnlockAll releases write locks on all shards.
+func (sl *shardedLock) UnlockAll() {
+	for i := range sl.locks {
+		sl.locks[i].Unlock()
+	}
+}
+
+// RLockAll acquires read locks on all shards (for global reads).
+func (sl *shardedLock) RLockAll() {
+	for i := range sl.locks {
+		sl.locks[i].RLock()
+	}
+}
+
+// RUnlockAll releases read locks on all shards.
+func (sl *shardedLock) RUnlockAll() {
+	for i := range sl.locks {
+		sl.locks[i].RUnlock()
+	}
+}
+
 // Storage implements storage.Backend using the local filesystem.
+// Uses sharded locking for high-concurrency blob operations.
 type Storage struct {
 	dataDir    string
 	tempDir    string
 	pathConfig storage.PathConfig
 	logger     zerolog.Logger
-	mu         sync.RWMutex
+	shards     shardedLock
+	tempMu     sync.Mutex // Only for temp file creation
 }
 
 // Config holds configuration for the filesystem storage.
@@ -66,12 +141,13 @@ func NewStorage(cfg Config, logger zerolog.Logger) (*Storage, error) {
 
 // Store stores content from the reader and returns the content hash.
 // The content is first written to a temp file, then moved to its final location.
+// Uses per-hash sharded locking to allow concurrent uploads of different blobs.
 func (s *Storage) Store(ctx context.Context, reader io.Reader, size int64) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Create temp file
+	// Phase 1: Write to temp file without holding any hash lock
+	// Only use temp mutex briefly to create temp file
+	s.tempMu.Lock()
 	tempFile, err := os.CreateTemp(s.tempDir, "upload-*")
+	s.tempMu.Unlock()
 	if err != nil {
 		return "", fmt.Errorf("failed to create temp file: %w", err)
 	}
@@ -91,7 +167,7 @@ func (s *Storage) Store(ctx context.Context, reader io.Reader, size int64) (stri
 	// Wrap reader to compute hash while copying
 	teeReader := io.TeeReader(reader, hasher)
 
-	// Copy content to temp file
+	// Copy content to temp file (no lock needed - temp file is unique)
 	written, err := io.Copy(tempFile, teeReader)
 	if err != nil {
 		_ = tempFile.Close()
@@ -109,6 +185,10 @@ func (s *Storage) Store(ctx context.Context, reader io.Reader, size int64) (stri
 
 	// Get the content hash
 	contentHash := hex.EncodeToString(hasher.Sum(nil))
+
+	// Phase 2: Now that we know the hash, acquire the specific shard lock
+	s.shards.Lock(contentHash)
+	defer s.shards.Unlock(contentHash)
 
 	// Generate storage path based on hash
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
@@ -150,9 +230,10 @@ func (s *Storage) Store(ctx context.Context, reader io.Reader, size int64) (stri
 }
 
 // Retrieve returns a reader for the blob with the given content hash.
+// Uses sharded read lock for the specific hash to allow concurrent reads.
 func (s *Storage) Retrieve(ctx context.Context, contentHash string) (io.ReadCloser, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.shards.RLock(contentHash)
+	defer s.shards.RUnlock(contentHash)
 
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
 
@@ -168,9 +249,10 @@ func (s *Storage) Retrieve(ctx context.Context, contentHash string) (io.ReadClos
 }
 
 // RetrieveRange returns a reader for a range of bytes from the blob.
+// Uses sharded read lock for the specific hash.
 func (s *Storage) RetrieveRange(ctx context.Context, contentHash string, offset, length int64) (io.ReadCloser, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.shards.RLock(contentHash)
+	defer s.shards.RUnlock(contentHash)
 
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
 
@@ -200,9 +282,10 @@ func (s *Storage) RetrieveRange(ctx context.Context, contentHash string, offset,
 }
 
 // Delete removes a blob from storage.
+// Uses sharded write lock for the specific hash.
 func (s *Storage) Delete(ctx context.Context, contentHash string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.shards.Lock(contentHash)
+	defer s.shards.Unlock(contentHash)
 
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
 
@@ -224,9 +307,10 @@ func (s *Storage) Delete(ctx context.Context, contentHash string) error {
 }
 
 // Exists checks if a blob exists in storage.
+// Uses sharded read lock for the specific hash.
 func (s *Storage) Exists(ctx context.Context, contentHash string) (bool, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.shards.RLock(contentHash)
+	defer s.shards.RUnlock(contentHash)
 
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
 
@@ -242,9 +326,10 @@ func (s *Storage) Exists(ctx context.Context, contentHash string) (bool, error) 
 }
 
 // GetSize returns the size of a blob in bytes.
+// Uses sharded read lock for the specific hash.
 func (s *Storage) GetSize(ctx context.Context, contentHash string) (int64, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.shards.RLock(contentHash)
+	defer s.shards.RUnlock(contentHash)
 
 	fullPath := storage.ComputePath(s.pathConfig, contentHash)
 
@@ -321,10 +406,8 @@ func (l *limitedReadCloser) Close() error {
 }
 
 // HealthCheck verifies the storage backend is accessible.
+// Does not require hash locks as it only checks directory accessibility.
 func (s *Storage) HealthCheck(ctx context.Context) error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	// Check data directory is accessible
 	if _, err := os.Stat(s.dataDir); err != nil {
 		return fmt.Errorf("data directory not accessible: %w", err)

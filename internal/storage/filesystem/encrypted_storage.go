@@ -61,9 +61,6 @@ func NewEncryptedStorage(cfg EncryptedConfig, logger zerolog.Logger) (*Encrypted
 // The content is encrypted before being written to disk.
 // Returns the content hash of the ORIGINAL (unencrypted) content.
 func (s *EncryptedStorage) Store(ctx context.Context, reader io.Reader, size int64) (string, error) {
-	s.storage.mu.Lock()
-	defer s.storage.mu.Unlock()
-
 	// First, read all content to calculate hash and encrypt
 	// Note: For very large files, a streaming approach would be better
 	plaintext, err := io.ReadAll(reader)
@@ -78,6 +75,10 @@ func (s *EncryptedStorage) Store(ctx context.Context, reader io.Reader, size int
 
 	// Calculate content hash (of plaintext, for CAS addressing)
 	contentHash := crypto.SHA256Hex(plaintext)
+
+	// Acquire sharded lock for this specific hash
+	s.storage.shards.Lock(contentHash)
+	defer s.storage.shards.Unlock(contentHash)
 
 	// Generate storage path
 	fullPath := storage.ComputePath(s.storage.pathConfig, contentHash)
@@ -136,8 +137,9 @@ func (s *EncryptedStorage) RetrieveMixedMode(ctx context.Context, contentHash st
 		return s.storage.Retrieve(ctx, contentHash)
 	}
 
-	s.storage.mu.RLock()
-	defer s.storage.mu.RUnlock()
+	// Acquire sharded read lock for this specific hash
+	s.storage.shards.RLock(contentHash)
+	defer s.storage.shards.RUnlock(contentHash)
 
 	fullPath := storage.ComputePath(s.storage.pathConfig, contentHash)
 
@@ -198,8 +200,9 @@ func (s *EncryptedStorage) GetTempDir() string {
 // EncryptExistingBlob encrypts an existing unencrypted blob in place.
 // Used by the encrypt-blobs migration CLI command.
 func (s *EncryptedStorage) EncryptExistingBlob(ctx context.Context, contentHash string) error {
-	s.storage.mu.Lock()
-	defer s.storage.mu.Unlock()
+	// Acquire sharded write lock for this specific hash
+	s.storage.shards.Lock(contentHash)
+	defer s.storage.shards.Unlock(contentHash)
 
 	fullPath := storage.ComputePath(s.storage.pathConfig, contentHash)
 
