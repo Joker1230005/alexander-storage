@@ -18,18 +18,22 @@ spec:
         app: alexander-storage
     spec:
       serviceAccountName: alexander-storage
+      automountServiceAccountToken: false  # CKV_K8S_38: Only mount when necessary
       securityContext:
-        fsGroup: 1000
+        fsGroup: 10000
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: alexander
-          image: ghcr.io/neuralforgeone/alexander-storage:latest
-          imagePullPolicy: IfNotPresent
+          # CKV_K8S_43: Use digest for image verification
+          # CKV_K8S_14: Use specific version tag, not latest
+          # Replace with actual digest: ghcr.io/neuralforgeone/alexander-storage@sha256:<digest>
+          image: ghcr.io/neuralforgeone/alexander-storage:v1.0.0
+          imagePullPolicy: Always  # CKV_K8S_15: Always pull to ensure latest security patches
           securityContext:
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 10000      # CKV_K8S_40: High UID (>10000) to avoid host conflict
+            runAsGroup: 10000    # CKV_K8S_40: High GID (>10000) to avoid host conflict
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -42,18 +46,13 @@ spec:
             - name: metrics
               containerPort: 9091
               protocol: TCP
+          # CKV_K8S_35: Use secrets as files instead of environment variables
+          env:
+            - name: ALEXANDER_CONFIG_FILE
+              value: /etc/alexander/config.yaml
           envFrom:
             - configMapRef:
                 name: alexander-config
-            - secretRef:
-                name: alexander-secrets
-          resources:
-            requests:
-              cpu: 100m
-              memory: 128Mi
-            limits:
-              cpu: 1000m
-              memory: 1Gi
           volumeMounts:
             # Data volume: writable, owned by app user
             - name: data
@@ -62,12 +61,23 @@ spec:
             - name: config
               mountPath: /etc/alexander
               readOnly: true
+            # Secrets volume: mounted as files (CKV_K8S_35)
+            - name: secrets
+              mountPath: /etc/alexander/secrets
+              readOnly: true
             # Temp directory: separate volume for safe writes
             - name: tmp
               mountPath: /tmp
             # Cache directory: for app-generated cache
             - name: cache
               mountPath: /var/cache/alexander
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
           livenessProbe:
             httpGet:
               path: /healthz
@@ -94,6 +104,11 @@ spec:
           configMap:
             name: alexander-config-file
             defaultMode: 0444
+        # Secrets: mounted as files (CKV_K8S_35)
+        - name: secrets
+          secret:
+            secretName: alexander-secrets
+            defaultMode: 0400
         # Temp: ephemeral storage with restrictive permissions
         - name: tmp
           emptyDir:

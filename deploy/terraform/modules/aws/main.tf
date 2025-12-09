@@ -201,6 +201,12 @@ variable "waf_web_acl_arn" {
   default     = ""
 }
 
+variable "waf_logging_bucket_arn" {
+  description = "S3 bucket ARN for WAF logging (must start with aws-waf-logs-)"
+  type        = string
+  default     = ""
+}
+
 # Locals
 locals {
   common_tags = merge({
@@ -216,37 +222,70 @@ resource "random_id" "this" {
   byte_length = 4
 }
 
-# Security Group
+# Security Group for EC2 instances
 resource "aws_security_group" "alexander" {
-  name        = "${var.name}-${var.environment}-sg"
-  description = "Security group for Alexander Storage"
+  name        = "${var.name}-${var.environment}-ec2-sg"
+  description = "Security group for Alexander Storage EC2 instances"
   vpc_id      = var.vpc_id
   
   tags = local.common_tags
 }
 
-# HTTP ingress rule
-resource "aws_vpc_security_group_ingress_rule" "http" {
-  description       = "Allow HTTP from anywhere"
-  security_group_id = aws_security_group.alexander.id
-  from_port         = 8080
-  to_port           = 8080
+# Security Group for ALB (CKV2_AWS_5: Ensure SG is attached to resource)
+resource "aws_security_group" "alb" {
+  name        = "${var.name}-${var.environment}-alb-sg"
+  description = "Security group for Alexander Storage ALB"
+  vpc_id      = var.vpc_id
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-${var.environment}-alb-sg" })
+}
+
+# ALB HTTP ingress rule
+resource "aws_vpc_security_group_ingress_rule" "alb_http" {
+  description       = "Allow HTTP to ALB"
+  security_group_id = aws_security_group.alb.id
+  from_port         = 80
+  to_port           = 80
   ip_protocol       = "tcp"
   cidr_ipv4         = var.allowed_cidr != null ? var.allowed_cidr : "0.0.0.0/0"
   
-  tags = merge(local.common_tags, { Name = "${var.name}-http-ingress" })
+  tags = merge(local.common_tags, { Name = "${var.name}-alb-http-ingress" })
 }
 
-# HTTPS ingress rule
-resource "aws_vpc_security_group_ingress_rule" "https" {
-  description       = "Allow HTTPS from anywhere"
-  security_group_id = aws_security_group.alexander.id
+# ALB HTTPS ingress rule
+resource "aws_vpc_security_group_ingress_rule" "alb_https" {
+  description       = "Allow HTTPS to ALB"
+  security_group_id = aws_security_group.alb.id
   from_port         = 443
   to_port           = 443
   ip_protocol       = "tcp"
   cidr_ipv4         = var.allowed_cidr != null ? var.allowed_cidr : "0.0.0.0/0"
   
-  tags = merge(local.common_tags, { Name = "${var.name}-https-ingress" })
+  tags = merge(local.common_tags, { Name = "${var.name}-alb-https-ingress" })
+}
+
+# ALB to EC2 egress
+resource "aws_vpc_security_group_egress_rule" "alb_to_ec2" {
+  description                  = "Allow ALB to reach EC2 instances"
+  security_group_id            = aws_security_group.alb.id
+  from_port                    = 8080
+  to_port                      = 8080
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alexander.id
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-alb-to-ec2" })
+}
+
+# EC2 HTTP ingress rule - only from ALB
+resource "aws_vpc_security_group_ingress_rule" "http" {
+  description                  = "Allow HTTP from ALB only"
+  security_group_id            = aws_security_group.alexander.id
+  from_port                    = 8080
+  to_port                      = 8080
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = aws_security_group.alb.id
+  
+  tags = merge(local.common_tags, { Name = "${var.name}-http-ingress" })
 }
 
 # gRPC cluster communication - only from within SG
@@ -535,7 +574,7 @@ resource "aws_lb" "alexander" {
   name               = "${var.name}-${var.environment}-alb"
   internal           = false
   load_balancer_type = "application"
-  security_groups    = [aws_security_group.alexander.id]
+  security_groups    = [aws_security_group.alb.id]  # Use dedicated ALB security group
   subnets            = var.subnet_ids
   
   enable_deletion_protection = var.environment == "production"
@@ -609,6 +648,59 @@ resource "aws_wafv2_web_acl" "alexander" {
     }
   }
   
+  # CKV2_AWS_76: Log4j vulnerability protection (AMR)
+  rule {
+    name     = "AWSManagedRulesAnonymousIpList"
+    priority = 3
+    
+    override_action {
+      none {}
+    }
+    
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesAnonymousIpList"
+        vendor_name = "AWS"
+      }
+    }
+    
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.name}-anonymous-ip"
+      sampled_requests_enabled   = true
+    }
+  }
+  
+  # Log4j/Log4Shell protection
+  rule {
+    name     = "AWSManagedRulesKnownBadInputsRuleSetLog4j"
+    priority = 4
+    
+    override_action {
+      none {}
+    }
+    
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesKnownBadInputsRuleSet"
+        vendor_name = "AWS"
+        
+        rule_action_override {
+          action_to_use {
+            block {}
+          }
+          name = "Log4JRCE"
+        }
+      }
+    }
+    
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${var.name}-log4j-protection"
+      sampled_requests_enabled   = true
+    }
+  }
+  
   visibility_config {
     cloudwatch_metrics_enabled = true
     metric_name                = "${var.name}-waf"
@@ -616,6 +708,48 @@ resource "aws_wafv2_web_acl" "alexander" {
   }
   
   tags = local.common_tags
+}
+
+# CKV2_AWS_31: WAF Logging Configuration
+resource "aws_wafv2_web_acl_logging_configuration" "alexander" {
+  count = var.enable_waf && var.waf_logging_bucket_arn != "" ? 1 : 0
+  
+  log_destination_configs = [var.waf_logging_bucket_arn]
+  resource_arn            = var.waf_web_acl_arn != "" ? var.waf_web_acl_arn : aws_wafv2_web_acl.alexander[0].arn
+  
+  logging_filter {
+    default_behavior = "DROP"
+    
+    filter {
+      behavior = "KEEP"
+      
+      condition {
+        action_condition {
+          action = "BLOCK"
+        }
+      }
+      
+      requirement = "MEETS_ANY"
+    }
+    
+    filter {
+      behavior = "KEEP"
+      
+      condition {
+        action_condition {
+          action = "COUNT"
+        }
+      }
+      
+      requirement = "MEETS_ANY"
+    }
+  }
+  
+  redacted_fields {
+    single_header {
+      name = "authorization"
+    }
+  }
 }
 
 # WAF Association with ALB
@@ -722,8 +856,13 @@ output "secret_access_key" {
 }
 
 output "security_group_id" {
-  description = "Security group ID"
+  description = "EC2 Security group ID"
   value       = aws_security_group.alexander.id
+}
+
+output "alb_security_group_id" {
+  description = "ALB Security group ID"
+  value       = aws_security_group.alb.id
 }
 
 output "autoscaling_group_name" {
