@@ -152,6 +152,15 @@ func ParsePresignedV4(r *http.Request) (*SignedValues, int64, error) {
 	if _, err := fmt.Sscanf(expiresStr, "%d", &expires); err != nil {
 		return nil, 0, fmt.Errorf("%w: invalid expires value", ErrInvalidPresignedURL)
 	}
+	// PresignedURLMaxExpiry/MinExpiry are the documented (SECURITY.md) policy
+	// bounds. presign_service.go enforces them when this server mints a URL,
+	// but a caller can hand-build a presigned URL with any X-Amz-Expires
+	// value using their own valid credentials, so the bound must also be
+	// enforced here, on verification, not only at generation time.
+	requested := time.Duration(expires) * time.Second
+	if requested < PresignedURLMinExpiry || requested > PresignedURLMaxExpiry {
+		return nil, 0, fmt.Errorf("%w: expires out of allowed range", ErrInvalidPresignedURL)
+	}
 
 	return &SignedValues{
 		Credential: CredentialHeader{
